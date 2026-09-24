@@ -1,0 +1,11 @@
+{
+  "id": "/department/i-lab-photobook",
+  "name": "I Lab & I Photobook – Sales & Collections",
+  "short_name": "I Lab",
+  "start_url": "/department/i-lab-photobook",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f4",
+  "theme_color": "#14213d",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

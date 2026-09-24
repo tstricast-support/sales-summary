@@ -242,6 +242,14 @@ function DepartmentPage({ page }) {
   const { title, slugs } = PAGES[page]
   const [sp] = useSearchParams()
   const [tab, setTab] = useState(slugs.includes(sp.get('tab')) ? sp.get('tab') : slugs[0])
+
+  useEffect(() => {
+  const link = document.querySelector('link[rel="manifest"]')
+  const old = link?.getAttribute('href')
+  link?.setAttribute('href', `/manifests/${page}.json`)
+  return () => { if (old) link?.setAttribute('href', old) }
+}, [page])
+
   return (
     <main className="mx-auto max-w-6xl space-y-4 p-4 pb-10">
       <header className="flex items-center gap-3">
