@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-area-inset-top); }
+.card { @apply bg-white rounded-lg border border-ink/10 p-4; }
+.input { @apply w-full rounded-md border border-ink/20 bg-white px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-accent; }
+.btn { @apply inline-flex items-center justify-center gap-2 rounded-md bg-ink px-4 py-2 font-medium text-white hover:bg-ink/90 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-accent; }
+.btn-ghost { @apply inline-flex items-center gap-2 rounded-md border border-ink/20 bg-white px-3 py-2 text-sm font-medium hover:bg-ink/5; }
+
+.react-calendar { width: 100%; border: 0; font-family: inherit; background: transparent; }
+.react-calendar__tile { position: relative; padding: .7em .3em; }
+.react-calendar__tile--active { background: #14213d !important; color: #fff; border-radius: 6px; }
+.react-calendar__tile--now { background: #ccfbf1; border-radius: 6px; }
+.react-calendar__tile.has-rec::after { content: ''; position: absolute; bottom: 4px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 9999px; background: #0f766e; }
+
+@media print {
+  body.printing-log * { visibility: hidden; }
+  body.printing-log .log-area, body.printing-log .log-area * { visibility: visible; }
+  body.printing-log .log-area { position: absolute; left: 0; top: 0; width: 100%; }
+  .no-print { display: none !important; }
+}
