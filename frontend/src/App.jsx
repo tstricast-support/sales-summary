@@ -375,18 +375,83 @@ function DepartmentPage({ page }) {
   )
 }
 
-/* ───────────── admin ───────────── */
 function AdminShell() {
-  const link = ({ isActive }) => `flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
+  const link = ({ isActive }) => `flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium sm:flex-none ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
   return (
     <>
-      <nav className="no-print sticky top-0 z-10 flex items-center gap-2 bg-ink px-4 py-2 text-white">
-        <span className="mr-auto text-lg font-bold">Summary</span>
-        <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
-<NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
+      <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
+        <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
+        <div className="flex gap-2">
+          <NavLink to="/admin/departments" className={link}><Building2 size={18} />Departments</NavLink>
+          <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
+        </div>
       </nav>
       <Outlet />
     </>
+  )
+}
+
+function TotalsCard() {
+  const todayStr = iso(new Date())
+  const [open, setOpen] = useState(false)
+  const [kind, setKind] = useState('today')
+  const [from, setFrom] = useState(todayStr.slice(0, 8) + '01')
+  const [to, setTo] = useState(todayStr)
+  const [tot, setTot] = useState({ sales: 0, collection: 0 })
+
+  const range = kind === 'today' ? { start: todayStr, end: todayStr }
+    : kind === 'custom' ? { start: from, end: to } : rangeFor(kind)
+  const invalid = kind === 'custom' && (!from || !to || from > to)
+
+  useEffect(() => {
+    if (invalid) return
+    let live = true
+    call(`/api/summary?start=${range.start}&end=${range.end}`).then(r => r.json())
+      .then(s => live && setTot(s.totals)).catch(() => {})
+    return () => { live = false }
+  }, [range.start, range.end, invalid])
+
+  const names = { today: 'Today', weekly: 'Last 7 days', monthly: 'This month', yearly: 'This year', custom: 'Custom' }
+
+  return (
+    <section className="card mt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold uppercase">Total – All Departments</h2>
+          <p className={`text-xs ${invalid ? 'text-red-700' : 'text-ink/60'}`}>
+            {invalid ? 'From date must be on or before the To date.' : `${names[kind]} · ${range.start} → ${range.end}`}
+          </p>
+        </div>
+        <button className="btn-ghost" onClick={() => setOpen(o => !o)} aria-expanded={open}>DATE FILTER</button>
+      </div>
+
+      {open && (
+        <div className="mt-3 space-y-3 rounded-md border border-ink/10 bg-paper p-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {Object.entries(names).map(([k, l]) => (
+              <button key={k} onClick={() => { setKind(k); if (k !== 'custom') setOpen(false) }}
+                className={`rounded-md border px-3 py-2 text-sm font-medium ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
+            ))}
+          </div>
+          {kind === 'custom' && (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+                <label className="block min-w-0 text-xs font-medium">From
+                  <input type="date" className="input mt-1 min-w-0" value={from} max={to || todayStr} onChange={e => setFrom(e.target.value)} /></label>
+                <label className="block min-w-0 text-xs font-medium">To
+                  <input type="date" className="input mt-1 min-w-0" value={to} min={from} max={todayStr} onChange={e => setTo(e.target.value)} /></label>
+              </div>
+              <button className="btn w-full sm:w-auto" onClick={() => setOpen(false)}>Done</button>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-md bg-emerald-50 p-3"><p className="text-xs uppercase text-ink/70">Total sales</p><p className="text-2xl font-bold text-sale">{money(tot.sales)}</p></div>
+        <div className="rounded-md bg-orange-50 p-3"><p className="text-xs uppercase text-ink/70">Total collection</p><p className="text-2xl font-bold text-coll">{money(tot.collection)}</p></div>
+      </div>
+    </section>
   )
 }
 
@@ -453,6 +518,7 @@ function Departments() {
           )
         })}
       </div>
+      <TotalsCard />
     </main>
   )
 }
@@ -465,6 +531,10 @@ function Dashboard() {
   const [dept, setDept] = useState('')
   const [err, setErr] = useState('')
   const [ov, setOv] = useState('')
+
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [depOpen, setDepOpen] = useState(false)
+  const [logOpen, setLogOpen] = useState(false)
 
   const load = useCallback(async () => {
     setErr('')
@@ -488,72 +558,108 @@ function Dashboard() {
     } catch { setErr('Export failed. Try again.') }
   }
   const printLog = () => {
+  setLogOpen(true)
+  setTimeout(() => {
     document.body.classList.add('printing-log')
     window.onafterprint = () => document.body.classList.remove('printing-log')
     window.print()
-  }
+  }, 150)
+}
+
+    const names = { daily: 'Today', weekly: 'Last 7 days', monthly: 'This month', yearly: 'This year', custom: 'Custom' }
+  const chev = open => <ChevronRight size={20} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
 
   return (
     <main className="mx-auto max-w-6xl space-y-4 p-4 pb-10">
-      <div className="no-print flex flex-wrap items-end gap-2">
-        {['daily', 'weekly', 'monthly', 'yearly', 'custom'].map(k => (
-          <button key={k} onClick={() => pick(k)} className={`rounded-md border px-3 py-2 text-sm font-medium capitalize ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{k}</button>
-        ))}
-        <input type="date" className="input !w-auto" value={range.start} max={range.end}
-          onChange={e => { setKind('custom'); setRange({ ...range, start: e.target.value }) }} aria-label="Start date" />
-        <input type="date" className="input !w-auto" value={range.end} min={range.start}
-          onChange={e => { setKind('custom'); setRange({ ...range, end: e.target.value }) }} aria-label="End date" />
-        <button className="btn-ghost ml-auto" onClick={() => exportXlsx('')}><Download size={16} />Export all</button>
+      {/* FILTER BAR: DATE FILTER + EXPORT ALL only */}
+      <div className="no-print space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn" onClick={() => setFilterOpen(o => !o)} aria-expanded={filterOpen}>DATE FILTER</button>
+          <button className="btn-ghost" onClick={() => exportXlsx('')}><Download size={16} />EXPORT ALL</button>
+          <p className="w-full text-xs text-ink/60 sm:ml-2 sm:w-auto">{names[kind]} · {range.start} → {range.end}</p>
+        </div>
+        {filterOpen && (
+          <div className="space-y-3 rounded-md border border-ink/10 bg-white p-3">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {Object.entries(names).map(([k, l]) => (
+                <button key={k} onClick={() => { pick(k); if (k !== 'custom') setFilterOpen(false) }}
+                  className={`rounded-md border px-3 py-2 text-sm font-medium ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
+              ))}
+            </div>
+            {kind === 'custom' && (
+              <>
+                <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+                  <label className="block min-w-0 text-xs font-medium">From
+                    <input type="date" className="input mt-1 min-w-0" value={range.start} max={range.end}
+                      onChange={e => e.target.value && setRange({ ...range, start: e.target.value })} /></label>
+                  <label className="block min-w-0 text-xs font-medium">To
+                    <input type="date" className="input mt-1 min-w-0" value={range.end} min={range.start}
+                      onChange={e => e.target.value && setRange({ ...range, end: e.target.value })} /></label>
+                </div>
+                <button className="btn w-full sm:w-auto" onClick={() => setFilterOpen(false)}>Done</button>
+              </>
+            )}
+          </div>
+        )}
       </div>
       <Notice m={err && { t: 'err', m: err }} />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="card"><p className="text-sm text-ink/70">Total sales</p><p className="text-3xl font-bold text-sale">{money(sum?.totals.sales)}</p></div>
-        <div className="card"><p className="text-sm text-ink/70">Total collections</p><p className="text-3xl font-bold text-coll">{money(sum?.totals.collection)}</p></div>
-      </div>
-
       <section className="card no-print">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">Add or override an entry</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold uppercase">Add or Override an Entry</h2>
           <select className="input !w-auto" value={ov} onChange={e => setOv(e.target.value)}>
             <option value="">Choose department…</option>{DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.name}</option>)}</select></div>
         {ov && <div className="mt-4"><DeptPanel key={ov} slug={ov} defaultName="Admin" /></div>}
       </section>
 
-      <section>
-        <h2 className="mb-2 font-semibold">Departments ({range.start} → {range.end})</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {(sum?.departments || []).map(d => {
-            const dp = DEPTS.find(x => x.slug === d.slug)
-            return (
-              <div key={d.slug} className="card">
-                <Link to={`/department/${dp.page}?tab=${d.slug}`} state={{ admin: true }} className="flex items-center gap-3">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-ink/10 bg-white p-1"><Logo slug={d.slug} className="h-full w-full" /></span>
-                  <span className="font-semibold">{d.name}</span>
-                </Link>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-md bg-emerald-50 p-2"><p className="text-xs text-ink/70">Sales</p><p className="font-bold text-sale">{money(d.sales)}</p></div>
-                  <div className="rounded-md bg-orange-50 p-2"><p className="text-xs text-ink/70">Collection</p><p className="font-bold text-coll">{money(d.collection)}</p></div>
+      {/* DEPARTMENTS (fold up) */}
+      <section className="card">
+        <button className="flex w-full items-center justify-between gap-2 text-left" onClick={() => setDepOpen(o => !o)} aria-expanded={depOpen}>
+          <h2 className="font-semibold uppercase">Departments ({range.start} → {range.end})</h2>{chev(depOpen)}
+        </button>
+        {depOpen && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {(sum?.departments || []).map(d => {
+              const dp = DEPTS.find(x => x.slug === d.slug)
+              return (
+                <div key={d.slug} className="rounded-lg border border-ink/10 p-3">
+                  <Link to={`/department/${dp.page}?tab=${d.slug}`} state={{ admin: true }} className="flex items-center gap-3">
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-ink/10 bg-white p-1"><Logo slug={d.slug} className="h-full w-full" /></span>
+                    <span className="font-semibold">{d.name}</span>
+                  </Link>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="rounded-md bg-emerald-50 p-2"><p className="text-xs uppercase text-ink/70">Sales</p><p className="font-bold text-sale">{money(d.sales)}</p></div>
+                    <div className="rounded-md bg-orange-50 p-2"><p className="text-xs uppercase text-ink/70">Collection</p><p className="font-bold text-coll">{money(d.collection)}</p></div>
+                  </div>
+                  <button className="btn-ghost no-print mt-3 w-full justify-center" onClick={() => exportXlsx(d.slug)}><Download size={14} />Excel</button>
                 </div>
-                <button className="btn-ghost no-print mt-3 w-full justify-center" onClick={() => exportXlsx(d.slug)}><Download size={14} />Excel</button>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
+        )}
       </section>
 
+      {/* AUDIT LOG (fold up) */}
       <section className="card log-area">
-        <div className="mb-2 flex flex-wrap items-center gap-2"><h2 className="mr-auto font-semibold">Audit log ({range.start} → {range.end})</h2>
-          <select className="input no-print !w-auto" value={dept} onChange={e => setDept(e.target.value)}>
-            <option value="">All departments</option>{DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.name}</option>)}</select>
-          <button className="btn-ghost no-print" onClick={printLog}><Printer size={16} />Print log</button></div>
-        <div className="overflow-x-auto"><table className="w-full text-left text-xs sm:text-sm">
-          <thead><tr className="border-b border-ink/10"><th className="py-2">When</th><th>User</th><th>Action</th><th>Department</th><th>Record date</th><th className="text-right">Sales (old → new)</th><th className="text-right">Collection (old → new)</th></tr></thead>
-          <tbody>{audit.map(a => (
-            <tr key={a.id} className="border-b border-ink/5"><td className="py-1.5 whitespace-nowrap">{new Date(a.timestamp).toLocaleString()}</td><td>{a.changed_by}</td><td>{a.action_type}</td><td>{a.department}</td><td>{a.record_date}</td>
-              <td className="text-right whitespace-nowrap">{a.old_sales == null ? '—' : money(a.old_sales)} → {money(a.new_sales)}</td>
-              <td className="text-right whitespace-nowrap">{a.old_collection == null ? '—' : money(a.old_collection)} → {money(a.new_collection)}</td></tr>))}
-            {!audit.length && <tr><td colSpan={7} className="py-6 text-center text-ink/60">No changes in this period.</td></tr>}</tbody>
-        </table></div>
+        <div className="flex items-center gap-2">
+          <button className="flex flex-1 items-center justify-between gap-2 text-left" onClick={() => setLogOpen(o => !o)} aria-expanded={logOpen}>
+            <h2 className="font-semibold uppercase">Audit Log ({range.start} → {range.end})</h2>{chev(logOpen)}
+          </button>
+          <button className="btn-ghost no-print" onClick={printLog}><Printer size={16} />Print log</button>
+        </div>
+        {logOpen && (
+          <>
+            <select className="input no-print mt-3 !w-auto" value={dept} onChange={e => setDept(e.target.value)}>
+              <option value="">All departments</option>{DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.name}</option>)}</select>
+            <div className="mt-3 overflow-x-auto"><table className="w-full text-left text-xs sm:text-sm">
+              <thead><tr className="border-b border-ink/10"><th className="py-2">When</th><th>User</th><th>Action</th><th>Department</th><th>Record date</th><th className="text-right">Sales (old → new)</th><th className="text-right">Collection (old → new)</th></tr></thead>
+              <tbody>{audit.map(a => (
+                <tr key={a.id} className="border-b border-ink/5"><td className="py-1.5 whitespace-nowrap">{new Date(a.timestamp).toLocaleString()}</td><td>{a.changed_by}</td><td>{a.action_type}</td><td>{a.department}</td><td>{a.record_date}</td>
+                  <td className="text-right whitespace-nowrap">{a.old_sales == null ? '—' : money(a.old_sales)} → {money(a.new_sales)}</td>
+                  <td className="text-right whitespace-nowrap">{a.old_collection == null ? '—' : money(a.old_collection)} → {money(a.new_collection)}</td></tr>))}
+                {!audit.length && <tr><td colSpan={7} className="py-6 text-center text-ink/60">No changes in this period.</td></tr>}</tbody>
+            </table></div>
+          </>
+        )}
       </section>
     </main>
   )
