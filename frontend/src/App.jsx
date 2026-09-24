@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts'
-import Calendar from 'react-calendar'
-import 'react-calendar/dist/Calendar.css'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft } from 'lucide-react'
 /* ───────────── config & helpers ───────────── */
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const NAME_RE = /^[A-Za-z][A-Za-z .'-]{1,59}$/
@@ -77,14 +75,23 @@ function Notice({ m }) {
 
 /* ───────────── department panel: calendar + form + history chart ───────────── */
 function DeptPanel({ slug, defaultName = '' }) {
-  const [date, setDate] = useState(new Date())
+  const todayStr = iso(new Date())
+  const [open, setOpen] = useState(false)
   const [mode, setMode] = useState('day')
-  const [period, setPeriod] = useState({ month: iso(new Date()).slice(0, 7), year: String(new Date().getFullYear()) })
+  const [date, setDate] = useState(todayStr)
+  const [period, setPeriod] = useState({ month: todayStr.slice(0, 7), year: String(new Date().getFullYear()) })
+  const [range, setRange] = useState('monthly')
+  const [entMonth, setEntMonth] = useState(todayStr.slice(0, 7))
+  const [tMode, setTMode] = useState('month')
+  const [tDate, setTDate] = useState(todayStr)
+  const [tMonth, setTMonth] = useState(todayStr.slice(0, 7))
+  const [tYear, setTYear] = useState(String(new Date().getFullYear()))
+  const [tot, setTot] = useState({ sales: 0, collection: 0, days: 0 })
   const [hist, setHist] = useState(() => store.get('hist:' + slug, []))
   const [f, setF] = useState({ sales: '', collection: '', by: defaultName || localStorage.getItem('by') || '' })
   const [msg, setMsg] = useState(null)
+  const [toast, setToast] = useState(null)
   const [busy, setBusy] = useState(false)
-  const key = iso(date)
 
   const refresh = useCallback(async () => {
     try {
@@ -94,12 +101,23 @@ function DeptPanel({ slug, defaultName = '' }) {
     } catch { /* offline: keep cached history */ }
   }, [slug])
 
-  useEffect(() => { setHist(store.get('hist:' + slug, [])); setMsg(null); refresh() }, [slug, refresh])
+  useEffect(() => { setHist(store.get('hist:' + slug, [])); setToast(null); refresh() }, [slug, refresh])
+
+  // prefill the form when an existing day is selected
   useEffect(() => {
-    if (mode !== 'day') return
-    const r = hist.find(x => x.record_date === key)
+    if (!open || mode !== 'day') return
+    const r = hist.find(x => x.record_date === date)
     setF(p => ({ ...p, sales: r ? String(r.sales_amount) : '', collection: r ? String(r.collection_amount) : '' }))
-  }, [key, hist, mode])
+  }, [open, date, hist, mode])
+
+  useEffect(() => {
+    if (!open) return
+    const h = e => e.key === 'Escape' && setOpen(false)
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [open])
+
+  const openEntry = d => { setMode('day'); setDate(d || todayStr); setMsg(null); setOpen(true) }
 
   const submit = async e => {
     e.preventDefault(); setMsg(null)
@@ -118,121 +136,202 @@ function DeptPanel({ slug, defaultName = '' }) {
       try {
         const r = await (await call('/api/records/bulk', { method: 'POST',
           body: JSON.stringify({ department_slug: slug, year: y, month: m, sales_amount: s, collection_amount: c, submitted_by: by }) })).json()
-        setMsg({ t: 'ok', m: `Saved ${label} for ${deptName(slug)} across ${r.days} days.` }); await refresh()
+        setToast({ t: 'ok', m: `Saved ${label} for ${deptName(slug)} across ${r.days} days.` }); setOpen(false); await refresh()
       } catch (err) {
         setMsg({ t: 'err', m: err.status ? err.message : 'You are offline. Month and year entries need an internet connection.' })
       }
       return setBusy(false)
     }
 
-    const body = { department_slug: slug, record_date: key, sales_amount: s, collection_amount: c, submitted_by: by }
+    if (!date || date > todayStr) return setMsg({ t: 'err', m: 'Choose a date that is today or earlier.' })
+    const body = { department_slug: slug, record_date: date, sales_amount: s, collection_amount: c, submitted_by: by }
     setBusy(true)
     try {
       await call('/api/records', { method: 'POST', body: JSON.stringify(body) })
-      setMsg({ t: 'ok', m: `Saved ${deptName(slug)} for ${key}.` }); await refresh()
+      setToast({ t: 'ok', m: `Saved ${deptName(slug)} for ${date}.` }); setOpen(false); await refresh()
     } catch (err) {
       if (err.status) setMsg({ t: 'err', m: err.message })
       else {
         store.set('queue', [...store.get('queue', []), body])
-        const nh = [...hist.filter(x => x.record_date !== key), { record_date: key, sales_amount: s, collection_amount: c, submitted_by: by }]
+        const nh = [...hist.filter(x => x.record_date !== date), { record_date: date, sales_amount: s, collection_amount: c, submitted_by: by }]
         setHist(nh); store.set('hist:' + slug, nh)
-        setMsg({ t: 'warn', m: 'You are offline. Entry stored on this device and will sync automatically.' })
+        setToast({ t: 'warn', m: 'You are offline. Entry stored on this device and will sync automatically.' }); setOpen(false)
       }
     }
     setBusy(false)
   }
+  // TOTAL section: work out the selected period (a week is Monday to Sunday)
+const totalRange = (() => {
+  const d = new Date((tDate || todayStr) + 'T00:00:00')
+  if (tMode === 'date') return { start: iso(d), end: iso(d), label: iso(d) }
+  if (tMode === 'week') {
+    const s = new Date(d); s.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+    const e = new Date(s); e.setDate(s.getDate() + 6)
+    return { start: iso(s), end: iso(e), label: `${iso(s)} → ${iso(e)}` }
+  }
+  if (tMode === 'month') {
+    const [y, m] = tMonth.split('-').map(Number)
+    return { start: iso(new Date(y, m - 1, 1)), end: iso(new Date(y, m, 0)), label: tMonth }
+  }
+  return { start: `${tYear}-01-01`, end: `${tYear}-12-31`, label: tYear }
+})()
 
-  const rows = [...hist].sort((a, b) => b.record_date.localeCompare(a.record_date))
-  const ym = key.slice(0, 7)
-  const monthTotals = rows.filter(r => r.record_date.startsWith(ym))
-    .reduce((t, r) => ({ sales: t.sales + Number(r.sales_amount), collection: t.collection + Number(r.collection_amount) }), { sales: 0, collection: 0 })
-  const chart = [...hist].sort((a, b) => a.record_date.localeCompare(b.record_date))
-    .map(r => ({ date: r.record_date.slice(5), Sales: r.sales_amount, Collection: r.collection_amount }))
-  const heading = mode === 'day' ? `Entry for ${key}` : mode === 'month' ? 'Monthly total' : 'Yearly total'
+useEffect(() => {
+  const { start, end } = totalRange
+  const ok = /^\d{4}-\d{2}-\d{2}$/
+  if (!ok.test(start) || !ok.test(end)) return
+  const sum = list => list.reduce((t, r) => ({ sales: t.sales + Number(r.sales_amount), collection: t.collection + Number(r.collection_amount), days: t.days + 1 }), { sales: 0, collection: 0, days: 0 })
+  let live = true
+  call(`/api/records?department=${slug}&start=${start}&end=${end}`).then(r => r.json())
+    .then(l => live && setTot(sum(l)))
+    .catch(() => live && setTot(sum(hist.filter(r => r.record_date >= start && r.record_date <= end)))) // offline fallback
+  return () => { live = false }
+}, [slug, totalRange.start, totalRange.end, hist])
+
+  // chart data: weekly = last 7 days, monthly = last 30 days, yearly = per month (last 12)
+  const chartData = (() => {
+    if (range === 'yearly') {
+      const m = {}
+      hist.forEach(r => {
+        const k = r.record_date.slice(0, 7)
+        m[k] = m[k] || { date: k, Sales: 0, Collection: 0 }
+        m[k].Sales += Number(r.sales_amount); m[k].Collection += Number(r.collection_amount)
+      })
+      return Object.values(m).sort((a, b) => a.date.localeCompare(b.date)).slice(-12)
+    }
+    const from = new Date(); from.setDate(from.getDate() - (range === 'weekly' ? 6 : 29))
+    return hist.filter(r => r.record_date >= iso(from)).sort((a, b) => a.record_date.localeCompare(b.record_date))
+      .map(r => ({ date: r.record_date.slice(5), Sales: Number(r.sales_amount), Collection: Number(r.collection_amount) }))
+  })()
+  const rangeLabel = { weekly: 'LAST 7 DAYS', monthly: 'LAST 30 DAYS', yearly: 'LAST 12 MONTHS' }[range]
+
+  const rows = hist.filter(r => r.record_date.startsWith(entMonth)).sort((a, b) => b.record_date.localeCompare(a.record_date))
+  const seg = on => `rounded-md border px-3 py-1.5 text-sm font-medium ${on ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
-      <div className="space-y-4">
-        {mode === 'day' && (
-          <section className="card" aria-label="Pick a date">
-            <Calendar value={date} onChange={setDate} maxDate={new Date()} locale="en-GB"
-              tileClassName={({ date: d, view }) => view === 'month' && hist.some(x => x.record_date === iso(d)) ? 'has-rec' : null} />
-          </section>
-        )}
-        <form onSubmit={submit} className="card space-y-3" noValidate>
-          <div className="flex gap-2">
-            {[['day', 'Day'], ['month', 'Month'], ['year', 'Year']].map(([k, l]) => (
-              <button type="button" key={k} onClick={() => { setMode(k); setMsg(null); setF(p => ({ ...p, sales: '', collection: '' })) }}
-                className={`flex-1 rounded-md border px-3 py-1.5 text-sm font-medium ${mode === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
-            ))}
-          </div>
-          <h2 className="font-semibold">{heading}</h2>
-          {mode === 'month' && (
-            <label className="block text-sm font-medium">Month
-              <input className="input mt-1" type="month" max={iso(new Date()).slice(0, 7)} value={period.month}
-                onChange={e => setPeriod({ ...period, month: e.target.value })} required /></label>
-          )}
-          {mode === 'year' && (
-            <label className="block text-sm font-medium">Year
-              <input className="input mt-1" type="number" min="2000" max={new Date().getFullYear()} value={period.year}
-                onChange={e => setPeriod({ ...period, year: e.target.value })} required /></label>
-          )}
-          <label className="block text-sm font-medium">{mode === 'day' ? 'Sales amount' : 'Total sales for the period'}
-            <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.sales}
-              onChange={e => setF({ ...f, sales: e.target.value })} required /></label>
-          <label className="block text-sm font-medium">{mode === 'day' ? 'Collection amount' : 'Total collection for the period'}
-            <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.collection}
-              onChange={e => setF({ ...f, collection: e.target.value })} required /></label>
-          <label className="block text-sm font-medium">Your name
-            <input className="input mt-1" value={f.by} maxLength={60} autoComplete="name" placeholder="e.g. Nimal Perera"
-              onChange={e => setF({ ...f, by: e.target.value })} required /></label>
-          {mode !== 'day' && <p className="text-xs text-ink/60">The total is spread evenly over each day up to today. Existing daily entries in this period are replaced.</p>}
-          <Notice m={msg} />
-          <button className="btn w-full" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save entry'}</button>
-        </form>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-bold uppercase">{deptName(slug)}</h2>
+        <button className="btn" onClick={() => openEntry()}>+ ENTRY</button>
       </div>
+      <Notice m={toast} />
 
-      <div className="space-y-4">
-        <section className="card">
-          <h2 className="mb-2 font-semibold">Totals for {ym}</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-md bg-emerald-50 p-3"><p className="text-xs text-ink/70">Sales</p><p className="text-xl font-bold text-sale">{money(monthTotals.sales)}</p></div>
-            <div className="rounded-md bg-orange-50 p-3"><p className="text-xs text-ink/70">Collection</p><p className="text-xl font-bold text-coll">{money(monthTotals.collection)}</p></div>
+      {/* 1. GRAPH */}
+      <section className="card">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold uppercase">Sales & Collection Trend – {rangeLabel}</h2>
+          <div className="flex gap-2">
+            {['weekly', 'monthly', 'yearly'].map(k => <button key={k} onClick={() => setRange(k)} className={`${seg(range === k)} capitalize`}>{k}</button>)}
           </div>
-        </section>
-        <section className="card">
-          <h2 className="mb-2 font-semibold">Recent entries – {deptName(slug)}</h2>
-          <div className="max-h-96 overflow-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
-                <th className="py-2">Date</th><th className="text-right">Sales</th><th className="text-right">Collection</th><th className="pl-4">By</th></tr></thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.record_date} onClick={() => { setMode('day'); setDate(new Date(r.record_date + 'T00:00:00')) }}
-                    className={`cursor-pointer border-b border-ink/5 hover:bg-ink/5 ${r.record_date === key ? 'bg-emerald-50' : ''}`}>
-                    <td className="py-2 whitespace-nowrap">{r.record_date}</td>
-                    <td className="text-right">{money(r.sales_amount)}</td>
-                    <td className="text-right">{money(r.collection_amount)}</td>
-                    <td className="pl-4">{r.submitted_by}</td>
-                  </tr>
-                ))}
-                {!rows.length && <tr><td colSpan={4} className="py-6 text-center text-ink/60">No entries yet.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section className="card min-h-[320px]">
-          <h2 className="mb-2 font-semibold">Last 12 months – {deptName(slug)}</h2>
-          {chart.length ? (
-            <ResponsiveContainer width="100%" height={320}>
-              <LineChart data={chart}><CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="date" fontSize={12} /><YAxis fontSize={12} width={60} /><Tooltip formatter={v => money(v)} /><Legend />
-                <Line type="monotone" dataKey="Sales" stroke="#0f766e" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Collection" stroke="#c2410c" strokeWidth={2} dot={false} /></LineChart>
-            </ResponsiveContainer>
-          ) : <p className="py-16 text-center text-ink/60">No entries yet. Pick a date and save your first entry.</p>}
-        </section>
+        </div>
+        {chartData.length ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="date" fontSize={12} /><YAxis fontSize={12} width={60} /><Tooltip formatter={v => money(v)} /><Legend />
+              <Line type="monotone" dataKey="Sales" stroke="#0f766e" strokeWidth={2} dot={chartData.length < 15} />
+              <Line type="monotone" dataKey="Collection" stroke="#c2410c" strokeWidth={2} dot={chartData.length < 15} /></LineChart>
+          </ResponsiveContainer>
+        ) : <p className="py-16 text-center text-ink/60">No entries in this period. Tap + ENTRY to add one.</p>}
+      </section>
+
+      {/* 2. RECENT ENTRIES */}
+      <section className="card">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold uppercase">Recent Entries</h2>
+          <input type="month" className="input !w-auto" value={entMonth} max={todayStr.slice(0, 7)}
+            onChange={e => e.target.value && setEntMonth(e.target.value)} aria-label="Filter by month" />
+        </div>
+        <div className="max-h-96 overflow-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
+              <th className="py-2">Date</th><th className="text-right">Sales</th><th className="text-right">Collection</th><th className="pl-4">By</th></tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.record_date} onClick={() => openEntry(r.record_date)} className="cursor-pointer border-b border-ink/5 hover:bg-ink/5">
+                  <td className="py-2 whitespace-nowrap">{r.record_date}</td>
+                  <td className="text-right">{money(r.sales_amount)}</td>
+                  <td className="text-right">{money(r.collection_amount)}</td>
+                  <td className="pl-4">{r.submitted_by}</td>
+                </tr>
+              ))}
+              {!rows.length && <tr><td colSpan={4} className="py-6 text-center text-ink/60">No entries in {entMonth}.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-ink/60">Tap a row to edit that day. Only the last 12 months are loaded.</p>
+      </section>
+
+      {/* 3. TOTAL */}
+    <section className="card">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold uppercase">Total – {totalRange.label}</h2>
+        <div className="flex gap-2">
+          {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']].map(([k, l]) => (
+            <button key={k} onClick={() => setTMode(k)} className={seg(tMode === k)}>{l}</button>
+          ))}
+        </div>
       </div>
+      {(tMode === 'date' || tMode === 'week') && (
+        <label className="mb-3 block text-sm font-medium">{tMode === 'date' ? 'Date' : 'Pick any day in the week'}
+          <input className="input mt-1 !w-auto" type="date" max={todayStr} value={tDate} onChange={e => e.target.value && setTDate(e.target.value)} /></label>
+      )}
+      {tMode === 'month' && (
+        <label className="mb-3 block text-sm font-medium">Month
+          <input className="input mt-1 !w-auto" type="month" max={todayStr.slice(0, 7)} value={tMonth} onChange={e => e.target.value && setTMonth(e.target.value)} /></label>
+      )}
+      {tMode === 'year' && (
+        <label className="mb-3 block text-sm font-medium">Year
+          <input className="input mt-1 !w-auto" type="number" min="2000" max={new Date().getFullYear()} value={tYear} onChange={e => setTYear(e.target.value)} /></label>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-md bg-emerald-50 p-3"><p className="text-xs uppercase text-ink/70">Sales</p><p className="text-xl font-bold text-sale">{money(tot.sales)}</p></div>
+        <div className="rounded-md bg-orange-50 p-3"><p className="text-xs uppercase text-ink/70">Collection</p><p className="text-xl font-bold text-coll">{money(tot.collection)}</p></div>
+      </div>
+      <p className="mt-2 text-xs text-ink/60">{tot.days} day{tot.days === 1 ? '' : 's'} with entries in this period.</p>
+    </section>
+
+      {/* +ENTRY POPUP */}
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
+          <form role="dialog" aria-modal="true" aria-label="New entry" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
+            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold uppercase">New Entry – {deptName(slug)}</h2>
+              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
+            </div>
+            <div className="flex gap-2">
+              {[['day', 'Day'], ['month', 'Month'], ['year', 'Year']].map(([k, l]) => (
+                <button type="button" key={k} className={`${seg(mode === k)} flex-1`}
+                  onClick={() => { setMode(k); setMsg(null); if (k !== 'day') setF(p => ({ ...p, sales: '', collection: '' })) }}>{l}</button>
+              ))}
+            </div>
+            {mode === 'day' && (
+              <label className="block text-sm font-medium">Date
+                <input className="input mt-1" type="date" max={todayStr} value={date} onChange={e => setDate(e.target.value)} required /></label>
+            )}
+            {mode === 'month' && (
+              <label className="block text-sm font-medium">Month
+                <input className="input mt-1" type="month" max={todayStr.slice(0, 7)} value={period.month} onChange={e => setPeriod({ ...period, month: e.target.value })} required /></label>
+            )}
+            {mode === 'year' && (
+              <label className="block text-sm font-medium">Year
+                <input className="input mt-1" type="number" min="2000" max={new Date().getFullYear()} value={period.year} onChange={e => setPeriod({ ...period, year: e.target.value })} required /></label>
+            )}
+            <label className="block text-sm font-medium">{mode === 'day' ? 'Sales amount' : 'Total sales for the period'}
+              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.sales} onChange={e => setF({ ...f, sales: e.target.value })} required /></label>
+            <label className="block text-sm font-medium">{mode === 'day' ? 'Collection amount' : 'Total collection for the period'}
+              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.collection} onChange={e => setF({ ...f, collection: e.target.value })} required /></label>
+            <label className="block text-sm font-medium">Your name
+              <input className="input mt-1" value={f.by} maxLength={60} autoComplete="name" placeholder="e.g. Nimal Perera" onChange={e => setF({ ...f, by: e.target.value })} required /></label>
+            {mode !== 'day' && <p className="text-xs text-ink/60">The total is spread evenly over each day up to today. Existing daily entries in this period are replaced.</p>}
+            <Notice m={msg} />
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
+              <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save entry'}</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
@@ -242,6 +341,7 @@ function DepartmentPage({ page }) {
   const { title, slugs } = PAGES[page]
   const [sp] = useSearchParams()
   const [tab, setTab] = useState(slugs.includes(sp.get('tab')) ? sp.get('tab') : slugs[0])
+  const fromAdmin = useLocation().state?.admin
 
   useEffect(() => {
   const link = document.querySelector('link[rel="manifest"]')
@@ -252,6 +352,11 @@ function DepartmentPage({ page }) {
 
   return (
     <main className="mx-auto max-w-6xl space-y-4 p-4 pb-10">
+      {fromAdmin && (
+        <Link to="/admin/departments" className="btn-ghost w-fit">
+          <ArrowLeft size={16} />Back to home
+        </Link>
+      )}
       <header className="flex items-center gap-3">
         {slugs.map(s => <Logo key={s} slug={s} className="h-14 w-14 sm:h-16 sm:w-16" />)}
         <h1 className="text-2xl font-bold sm:text-3xl">{title}</h1>
@@ -286,22 +391,53 @@ function AdminShell() {
 }
 
 function Departments() {
+  const todayStr = iso(new Date())
+  const [kind, setKind] = useState('today')
+  const [from, setFrom] = useState(todayStr.slice(0, 8) + '01') // 1st of this month
+  const [to, setTo] = useState(todayStr)
   const [totals, setTotals] = useState({})
+
+  const range = kind === 'today' ? { start: todayStr, end: todayStr } : { start: from, end: to }
+  const invalid = kind === 'custom' && (!from || !to || from > to)
+
   useEffect(() => {
-    const today = iso(new Date())
-    call(`/api/summary?start=${today}&end=${today}`).then(r => r.json())
-      .then(s => setTotals(Object.fromEntries(s.departments.map(d => [d.slug, d]))))
+    if (invalid) return
+    let live = true
+    call(`/api/summary?start=${range.start}&end=${range.end}`).then(r => r.json())
+      .then(s => live && setTotals(Object.fromEntries(s.departments.map(d => [d.slug, d]))))
       .catch(() => {})
-  }, [])
+    return () => { live = false }
+  }, [range.start, range.end, invalid])
+
   return (
     <main className="mx-auto max-w-6xl p-4">
-      <h1 className="mb-1 text-2xl font-bold">Departments</h1>
-      <p className="mb-4 text-sm text-ink/60">Today's totals. Tap a department to see its details.</p>
+      <h1 className="mb-3 text-2xl font-bold">Departments</h1>
+      <div className="mb-3 space-y-3">
+      <div className="flex gap-2">
+        {[['today', 'TODAY'], ['custom', 'CUSTOM']].map(([k, l]) => (
+          <button key={k} onClick={() => setKind(k)}
+            className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium sm:flex-none ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
+        ))}
+      </div>
+      {kind === 'custom' && (
+        <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+          <label className="block min-w-0 text-xs font-medium">From
+            <input type="date" className="input mt-1 min-w-0" value={from} max={to || todayStr} onChange={e => setFrom(e.target.value)} /></label>
+          <label className="block min-w-0 text-xs font-medium">To
+            <input type="date" className="input mt-1 min-w-0" value={to} min={from} max={todayStr} onChange={e => setTo(e.target.value)} /></label>
+        </div>
+      )}
+    </div>
+      <p className={`mb-4 text-sm ${invalid ? 'text-red-700' : 'text-ink/60'}`}>
+        {invalid ? 'Choose a From date that is on or before the To date.'
+          : kind === 'today' ? "Today's totals. Tap a department to see its details."
+          : `Totals from ${from} to ${to}. Tap a department to see its details.`}
+      </p>
       <div className="space-y-3">
         {DEPTS.map(d => {
           const t = totals[d.slug] || { sales: 0, collection: 0 }
           return (
-            <Link key={d.slug} to={`/department/${d.page}?tab=${d.slug}`} className="card flex items-center gap-4 hover:shadow-md">
+            <Link key={d.slug} to={`/department/${d.page}?tab=${d.slug}`} state={{ admin: true }} className="card flex items-center gap-4 hover:shadow-md">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-ink/10 bg-white p-1">
                 <Logo slug={d.slug} className="h-full w-full" />
               </span>
@@ -390,7 +526,7 @@ function Dashboard() {
             const dp = DEPTS.find(x => x.slug === d.slug)
             return (
               <div key={d.slug} className="card">
-                <Link to={`/department/${dp.page}?tab=${d.slug}`} className="flex items-center gap-3">
+                <Link to={`/department/${dp.page}?tab=${d.slug}`} state={{ admin: true }} className="flex items-center gap-3">
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-ink/10 bg-white p-1"><Logo slug={d.slug} className="h-full w-full" /></span>
                   <span className="font-semibold">{d.name}</span>
                 </Link>
