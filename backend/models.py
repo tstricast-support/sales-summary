@@ -52,11 +52,41 @@ class DamageRecord(Base):
     submitted_by = Column(String(60), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+class ProjectCategory(Base):
+    __tablename__ = "project_categories"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(150), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectSupplier(Base):
+    __tablename__ = "project_suppliers"
+    __table_args__ = (UniqueConstraint("category_id", "name", name="uq_category_supplier"),)
+    id = Column(Integer, primary_key=True)
+    category_id = Column(Integer, ForeignKey("project_categories.id"), nullable=False, index=True)
+    name = Column(String(150), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    category = relationship("ProjectCategory")
+
+
 class ProjectExpense(Base):
     __tablename__ = "project_expenses"
     id = Column(Integer, primary_key=True)
-    good_name = Column(String(150), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("project_suppliers.id"), nullable=False, index=True)
     cost = Column(Numeric(14, 2), nullable=False, default=0)
     expense_date = Column(Date, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    supplier = relationship("ProjectSupplier")
+
+    @property
+    def supplier_name(self):
+        return self.supplier.name
+
+    @property
+    def category_id(self):
+        return self.supplier.category_id
+
+    @property
+    def category_name(self):
+        return self.supplier.category.name

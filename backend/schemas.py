@@ -97,24 +97,57 @@ class DamageOut(BaseModel):
     submitted_by: str
     created_at: datetime | None = None
 
-class ProjectIn(BaseModel):
-    good_name: str
-    cost: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
-    expense_date: date = Field(default_factory=date.today)
+class CategoryIn(BaseModel):
+    name: str
 
-    @field_validator("good_name")
+    @field_validator("name")
     @classmethod
     def valid_name(cls, v: str):
         v = " ".join(v.split())
         if not (1 <= len(v) <= 150):
-            raise ValueError("Item name must be 1-150 characters")
+            raise ValueError("Category name must be 1-150 characters")
         return v
+
+
+class CategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+
+
+class SupplierIn(BaseModel):
+    category_id: int
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, v: str):
+        v = " ".join(v.split())
+        if not (1 <= len(v) <= 150):
+            raise ValueError("Supplier name must be 1-150 characters")
+        return v
+
+
+class SupplierOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    category_id: int
+    name: str
+
+
+class ProjectIn(BaseModel):
+    supplier_id: int
+    cost: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    expense_date: date = Field(default_factory=date.today)
 
 
 class ProjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    good_name: str
+    supplier_id: int
+    supplier_name: str
+    category_id: int
+    category_name: str
     cost: float
     expense_date: date
     updated_at: datetime | None = None

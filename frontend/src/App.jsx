@@ -676,93 +676,265 @@ function DamagePage() {
 }
 function ProjectsPage() {
   const todayStr = iso(new Date())
-  const empty = { good_name: '', cost: '', expense_date: todayStr }
+  const emptyForm = { category_id: '', supplier_id: '', cost: '', expense_date: todayStr }
   const [rows, setRows] = useState([])
+  const [categories, setCategories] = useState([])
+  const [suppliers, setSuppliers] = useState([])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(null) // null = new, else the row being edited
-  const [f, setF] = useState(empty)
+  const [f, setF] = useState(emptyForm)
+  const [newCatMode, setNewCatMode] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  const [newSupMode, setNewSupMode] = useState(false)
+  const [newSupName, setNewSupName] = useState('')
+  const [collapsed, setCollapsed] = useState({}) // category name -> collapsed?
+  const [printCat, setPrintCat] = useState(null)
   const [msg, setMsg] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     setErr('')
-    try { setRows(await (await call('/api/projects')).json()) }
-    catch (e) { setErr(e.status ? e.message : 'Cannot reach the server. Check your connection.') }
+    try {
+      const [p, c, s] = await Promise.all([
+        call('/api/projects').then(r => r.json()),
+        call('/api/project-categories').then(r => r.json()),
+        call('/api/project-suppliers').then(r => r.json()),
+      ])
+      setRows(p); setCategories(c); setSuppliers(s)
+    } catch (e) { setErr(e.status ? e.message : 'Cannot reach the server. Check your connection.') }
   }, [])
   useEffect(() => { load() }, [load])
 
-  const openNew = () => { setEditing(null); setF(empty); setMsg(null); setOpen(true) }
-  const openEdit = r => { setEditing(r); setF({ good_name: r.good_name, cost: String(r.cost), expense_date: r.expense_date }); setMsg(null); setOpen(true) }
+  const openNew = () => { setEditing(null); setF(emptyForm); setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true) }
+  const openEdit = r => {
+    setEditing(r)
+    setF({ category_id: String(r.category_id), supplier_id: String(r.supplier_id), cost: String(r.cost), expense_date: r.expense_date })
+    setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true)
+  }
+
+  // creating a category/supplier here immediately adds it to the select list, ready to pick next time
+  const addCategory = async () => {
+    const name = newCatName.trim()
+    if (!name) return setMsg({ t: 'err', m: 'Enter a category name first.' })
+    try {
+      const cat = await (await call('/api/project-categories', { method: 'POST', body: JSON.stringify({ name }) })).json()
+      setCategories(cs => cs.some(c => c.id === cat.id) ? cs : [...cs, cat].sort((a, b) => a.name.localeCompare(b.name)))
+      setF(p => ({ ...p, category_id: String(cat.id), supplier_id: '' }))
+      setNewCatMode(false); setNewCatName('')
+    } catch (e) { setMsg({ t: 'err', m: e.status ? e.message : 'Could not add category. Check your connection.' }) }
+  }
+
+  const addSupplier = async () => {
+    const name = newSupName.trim()
+    if (!f.category_id) return setMsg({ t: 'err', m: 'Choose or add a category first.' })
+    if (!name) return setMsg({ t: 'err', m: 'Enter a supplier / worker name first.' })
+    try {
+      const sup = await (await call('/api/project-suppliers', {
+        method: 'POST', body: JSON.stringify({ category_id: Number(f.category_id), name }),
+      })).json()
+      setSuppliers(ss => ss.some(s => s.id === sup.id) ? ss : [...ss, sup])
+      setF(p => ({ ...p, supplier_id: String(sup.id) }))
+      setNewSupMode(false); setNewSupName('')
+    } catch (e) { setMsg({ t: 'err', m: e.status ? e.message : 'Could not add supplier. Check your connection.' }) }
+  }
 
   const submit = async e => {
     e.preventDefault(); setMsg(null)
-    const name = f.good_name.trim()
-    if (!name) return setMsg({ t: 'err', m: 'Enter the item or good name.' })
+    if (!f.category_id) return setMsg({ t: 'err', m: 'Choose or add a category.' })
+    if (!f.supplier_id) return setMsg({ t: 'err', m: 'Choose or add a supplier / worker.' })
     const cost = parseFloat(f.cost)
-    if (!(cost >= 0)) return setMsg({ t: 'err', m: 'Cost must be a number of 0 or more.' })
+    if (!(cost >= 0)) return setMsg({ t: 'err', m: 'Amount must be a number of 0 or more.' })
     const expense_date = f.expense_date || todayStr // blank date auto-fills to today
+    const body = { supplier_id: Number(f.supplier_id), cost, expense_date }
     setBusy(true)
     try {
-      if (editing) await call(`/api/projects/${editing.id}`, { method: 'PUT', body: JSON.stringify({ good_name: name, cost, expense_date }) })
-      else await call('/api/projects', { method: 'POST', body: JSON.stringify({ good_name: name, cost, expense_date }) })
+      if (editing) await call(`/api/projects/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
+      else await call('/api/projects', { method: 'POST', body: JSON.stringify(body) })
       setOpen(false); await load()
     } catch (e) { setMsg({ t: 'err', m: e.status ? e.message : 'Cannot reach the server. Check your connection.' }) }
     setBusy(false)
   }
 
   const remove = async r => {
-    if (!window.confirm(`Delete "${r.good_name}"?`)) return
+    if (!window.confirm(`Delete the ${money(r.cost)} payment to ${r.supplier_name}?`)) return
     try { await call(`/api/projects/${r.id}`, { method: 'DELETE' }); await load() }
     catch (e) { setErr(e.status ? e.message : 'Could not delete. Check your connection.') }
   }
 
-  const total = rows.reduce((t, r) => t + Number(r.cost), 0)
+  // professional report: Category -> Supplier -> payment entries, each level totalled
+  const grouped = (() => {
+    const cats = new Map()
+    for (const r of rows) {
+      if (!cats.has(r.category_name)) cats.set(r.category_name, { total: 0, suppliers: new Map() })
+      const cat = cats.get(r.category_name)
+      cat.total += Number(r.cost)
+      if (!cat.suppliers.has(r.supplier_name)) cat.suppliers.set(r.supplier_name, { total: 0, entries: [] })
+      const sup = cat.suppliers.get(r.supplier_name)
+      sup.total += Number(r.cost)
+      sup.entries.push(r)
+    }
+    return [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  })()
+  const grandTotal = rows.reduce((t, r) => t + Number(r.cost), 0)
+  const toggleCat = name => setCollapsed(c => ({ ...c, [name]: !c[name] }))
+
+  const printCategory = catName => {
+  setPrintCat(catName)
+  setTimeout(() => {
+    document.body.classList.add('printing-category')
+    window.onafterprint = () => { document.body.classList.remove('printing-category'); setPrintCat(null) }
+    window.print()
+  }, 150)
+}
 
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="flex items-center gap-2 text-2xl font-bold uppercase"><Briefcase size={24} />Project Expenses</h1>
-        <button className="btn" onClick={openNew}>+ CREATE PROJECT</button>
+        <button className="btn" onClick={openNew}>+ ADD PAYMENT</button>
       </div>
       <Notice m={err && { t: 'err', m: err }} />
 
       <section className="card">
-        <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold uppercase">History</h2>
-          <p className="text-sm font-semibold">Total: {money(total)}</p></div>
-        <div className="max-h-[70vh] overflow-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
-              <th className="py-2">Date</th><th>Item</th><th className="text-right">Cost</th><th className="pl-4 no-print" /></tr></thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
-                  <td className="py-2 whitespace-nowrap">{sriDate(r.expense_date)}</td>
-                  <td>{r.good_name}</td>
-                  <td className="text-right">{money(r.cost)}</td>
-                  <td className="pl-4 text-right">
-                    <RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} />
-                  </td>
-                </tr>
-              ))}
-              {!rows.length && <tr><td colSpan={4} className="py-6 text-center text-ink/60">No entries yet. Tap + CREATE PROJECT to add one.</td></tr>}
-            </tbody>
-          </table>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-semibold uppercase">Expense Report — by Category</h2>
+          <p className="text-sm font-semibold">Grand total: {money(grandTotal)}</p>
         </div>
-      </section>
+        {!grouped.length && <p className="py-10 text-center text-ink/60">No entries yet. Tap + ADD PAYMENT to add one.</p>}
+        <div className="space-y-3">
+          {grouped.map(([catName, cat]) => (
+            <div key={catName} className="rounded-lg border border-ink/10">
+              <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+                <button type="button" onClick={() => toggleCat(catName)}
+                  className="flex flex-1 items-center gap-2 text-left font-semibold uppercase">
+                  <ChevronRight size={18} className={`shrink-0 transition-transform ${!collapsed[catName] ? 'rotate-90' : ''}`} />
+                  {catName}
+                </button>
+                <span className="text-sm font-semibold">{money(cat.total)}</span>
+                <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printCategory(catName)}
+                  aria-label={`Print ${catName} report`} title="Print A4 report for this category">
+                  <Printer size={16} />
+                </button>
+              </div>
+              {!collapsed[catName] && (
+                <div className="space-y-2 border-t border-ink/10 p-3">
+                  {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
+                    <div key={supName} className="rounded-md bg-paper p-2.5">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold">{supName}</p>
+                        <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
+                      </div>
+                      <table className="w-full text-left text-xs">
+                        <tbody>
+                          {sup.entries.map(r => (
+                            <tr key={r.id} className="border-b border-ink/5 last:border-0">
+                              <td className="py-1.5 pr-2 whitespace-nowrap text-ink/70">{sriDate(r.expense_date)}</td>
+                              <td className="py-1.5 text-right">{money(r.cost)}</td>
+                              <td className="py-1.5 pl-2 text-right no-print">
+                                <RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+            </section>
+
+      {/* A4 PRINT REPORT — invisible on screen, shown only while printing */}
+      {printCat && (() => {
+        const entry = grouped.find(([name]) => name === printCat)
+        if (!entry) return null
+        const [name, cat] = entry
+        return (
+          <div className="cat-print-area p-6">
+            <div className="mb-4 flex items-center justify-between border-b border-ink/20 pb-3">
+              <div>
+                <h1 className="text-xl font-bold uppercase">{name}</h1>
+                <p className="text-sm text-ink/60">Project Expense Report</p>
+              </div>
+              <div className="text-right text-sm text-ink/60">
+                <p>Generated {sriDate(todayStr)}</p>
+                <p className="font-semibold text-ink">Total: {money(cat.total)}</p>
+              </div>
+            </div>
+            {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
+              <div key={supName} className="mb-4 break-inside-avoid">
+                <div className="mb-1 flex items-center justify-between border-b border-ink/10 pb-1">
+                  <h2 className="text-sm font-semibold uppercase">{supName}</h2>
+                  <p className="text-sm font-semibold">{money(sup.total)}</p>
+                </div>
+                <table className="w-full text-left text-sm">
+                  <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="py-1 text-right">Amount</th></tr></thead>
+                  <tbody>
+                    {sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date)).map(r => (
+                      <tr key={r.id}><td className="py-0.5">{sriDate(r.expense_date)}</td><td className="py-0.5 text-right">{money(r.cost)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            <div className="mt-4 flex justify-end border-t border-ink/20 pt-2 text-base font-bold">
+              <p>Grand Total: {money(cat.total)}</p>
+            </div>
+          </div>
+        )
+      })()}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
           <form role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
-            className="w-full max-w-md space-y-3 rounded-t-xl bg-white p-4 sm:rounded-xl">
+            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold uppercase">{editing ? 'Edit entry' : 'New project expense'}</h2>
+              <h2 className="font-semibold uppercase">{editing ? 'Edit payment' : 'New payment'}</h2>
               <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
             </div>
-            <label className="block text-sm font-medium">Good / item name
-              <input className="input mt-1" value={f.good_name} maxLength={150} placeholder="ADD YOUR ITEM NAME"
-                onChange={e => setF({ ...f, good_name: e.target.value })} required /></label>
-            <label className="block text-sm font-medium">Cost
+
+            <label className="block text-sm font-medium">Category
+              <select className="input mt-1" value={newCatMode ? '__new' : f.category_id}
+                onChange={e => {
+                  if (e.target.value === '__new') { setNewCatMode(true); setNewCatName('') }
+                  else { setNewCatMode(false); setF(p => ({ ...p, category_id: e.target.value, supplier_id: '' })) }
+                }}>
+                <option value="">Choose category…</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value="__new">+ Add new category…</option>
+              </select>
+            </label>
+            {newCatMode && (
+              <div className="flex gap-2">
+                <input className="input" placeholder="e.g. DD Engineering Building" maxLength={150}
+                  value={newCatName} onChange={e => setNewCatName(e.target.value)} />
+                <button type="button" className="btn-ghost shrink-0" onClick={addCategory}>Add</button>
+              </div>
+            )}
+
+            <label className="block text-sm font-medium">Supplier / worker
+              <select className="input mt-1" disabled={!f.category_id} value={newSupMode ? '__new' : f.supplier_id}
+                onChange={e => {
+                  if (e.target.value === '__new') { setNewSupMode(true); setNewSupName('') }
+                  else { setNewSupMode(false); setF(p => ({ ...p, supplier_id: e.target.value })) }
+                }}>
+                <option value="">{f.category_id ? 'Choose supplier…' : 'Choose a category first'}</option>
+                {suppliers.filter(s => String(s.category_id) === String(f.category_id)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {f.category_id && <option value="__new">+ Add new supplier…</option>}
+              </select>
+            </label>
+            {newSupMode && (
+              <div className="flex gap-2">
+                <input className="input" placeholder="e.g. Sunil Wood Worker" maxLength={150}
+                  value={newSupName} onChange={e => setNewSupName(e.target.value)} />
+                <button type="button" className="btn-ghost shrink-0" onClick={addSupplier}>Add</button>
+              </div>
+            )}
+
+            <label className="block text-sm font-medium">Amount paid
               <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.cost}
                 onChange={e => setF({ ...f, cost: e.target.value })} required /></label>
             <label className="block text-sm font-medium">Date <span className="font-normal text-ink/60">(leave as today, or pick a past date)</span>

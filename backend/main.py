@@ -18,6 +18,7 @@ async def lifespan(app):
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         crud.seed_departments(db)
+        crud.migrate_projects(db)
     yield
 
 
@@ -148,6 +149,29 @@ def admin_remove_damage(damage_id: int, db: Session = Depends(get_db)):
     except LookupError as e:
         raise HTTPException(404, str(e))
 
+@app.get("/api/project-categories", response_model=list[schemas.CategoryOut])
+def project_categories(db: Session = Depends(get_db)):
+    return crud.list_categories(db)
+
+
+@app.post("/api/project-categories", response_model=schemas.CategoryOut)
+def add_project_category(data: schemas.CategoryIn, db: Session = Depends(get_db)):
+    return crud.add_category(db, data)
+
+
+@app.get("/api/project-suppliers", response_model=list[schemas.SupplierOut])
+def project_suppliers(category_id: int | None = None, db: Session = Depends(get_db)):
+    return crud.list_suppliers(db, category_id)
+
+
+@app.post("/api/project-suppliers", response_model=schemas.SupplierOut)
+def add_project_supplier(data: schemas.SupplierIn, db: Session = Depends(get_db)):
+    try:
+        return crud.add_supplier(db, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
 @app.get("/api/projects", response_model=list[schemas.ProjectOut])
 def projects(db: Session = Depends(get_db)):
     return crud.list_projects(db)
@@ -155,8 +179,10 @@ def projects(db: Session = Depends(get_db)):
 
 @app.post("/api/projects", response_model=schemas.ProjectOut)
 def add_project(data: schemas.ProjectIn, db: Session = Depends(get_db)):
-    return crud.add_project(db, data)
-
+    try:
+        return crud.add_project(db, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
 
 @app.put("/api/projects/{project_id}", response_model=schemas.ProjectOut)
 def edit_project(project_id: int, data: schemas.ProjectIn, db: Session = Depends(get_db)):

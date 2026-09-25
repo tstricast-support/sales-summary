@@ -24,9 +24,15 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
 /* Green dot under any day that already has an entry */
 .mini-cal .has-rec::after { content: ''; position: absolute; bottom: 2px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 9999px; background: #0f766e; }
 .mini-cal .react-calendar__tile--active.has-rec::after { background: #5eead4; }
+
 @media print {
+  @page { size: A4; margin: 14mm; }
   body.printing-log * { visibility: hidden; }
   body.printing-log .log-area, body.printing-log .log-area * { visibility: visible; }
   body.printing-log .log-area { position: absolute; left: 0; top: 0; width: 100%; }
+  body.printing-category * { visibility: hidden; }
+  body.printing-category .cat-print-area, body.printing-category .cat-print-area * { visibility: visible; }
+  body.printing-category .cat-print-area { display: block; position: absolute; left: 0; top: 0; width: 100%; }
   .no-print { display: none !important; }
 }
+.cat-print-area { display: none; }

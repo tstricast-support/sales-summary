@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_DOWN
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_,inspect,text
 from sqlalchemy.orm import joinedload
 import models, schemas
 
@@ -134,12 +134,60 @@ def delete_record(db, record_id: int):
     db.delete(rec); db.commit()
     
 
+def list_categories(db):
+    return db.query(models.ProjectCategory).order_by(models.ProjectCategory.name).all()
+
+
+def get_or_create_category(db, name: str):
+    name = " ".join(name.split())
+    cat = db.query(models.ProjectCategory).filter(func.lower(models.ProjectCategory.name) == name.lower()).first()
+    if not cat:
+        cat = models.ProjectCategory(name=name)
+        db.add(cat); db.flush()
+    return cat
+
+
+def add_category(db, c: schemas.CategoryIn):
+    cat = get_or_create_category(db, c.name)
+    db.commit(); db.refresh(cat)
+    return cat
+
+
+def list_suppliers(db, category_id: int | None = None):
+    q = db.query(models.ProjectSupplier)
+    if category_id:
+        q = q.filter_by(category_id=category_id)
+    return q.order_by(models.ProjectSupplier.name).all()
+
+
+def get_or_create_supplier(db, category_id: int, name: str):
+    name = " ".join(name.split())
+    sup = (db.query(models.ProjectSupplier).filter_by(category_id=category_id)
+           .filter(func.lower(models.ProjectSupplier.name) == name.lower()).first())
+    if not sup:
+        sup = models.ProjectSupplier(category_id=category_id, name=name)
+        db.add(sup); db.flush()
+    return sup
+
+
+def add_supplier(db, s: schemas.SupplierIn):
+    if not db.query(models.ProjectCategory).get(s.category_id):
+        raise LookupError("Unknown category")
+    sup = get_or_create_supplier(db, s.category_id, s.name)
+    db.commit(); db.refresh(sup)
+    return sup
+
+
 def list_projects(db):
-    return db.query(models.ProjectExpense).order_by(models.ProjectExpense.expense_date.desc(), models.ProjectExpense.id.desc()).all()
+    return (db.query(models.ProjectExpense)
+            .options(joinedload(models.ProjectExpense.supplier).joinedload(models.ProjectSupplier.category))
+            .order_by(models.ProjectExpense.expense_date.desc(), models.ProjectExpense.id.desc()).all())
 
 
 def add_project(db, p: schemas.ProjectIn):
-    rec = models.ProjectExpense(good_name=p.good_name, cost=p.cost, expense_date=p.expense_date)
+    if not db.query(models.ProjectSupplier).get(p.supplier_id):
+        raise LookupError("Unknown supplier")
+    rec = models.ProjectExpense(supplier_id=p.supplier_id, cost=p.cost, expense_date=p.expense_date)
     db.add(rec); db.commit(); db.refresh(rec)
     return rec
 
@@ -148,7 +196,9 @@ def update_project(db, project_id: int, p: schemas.ProjectIn):
     rec = db.query(models.ProjectExpense).get(project_id)
     if not rec:
         raise LookupError("Project entry not found")
-    rec.good_name, rec.cost, rec.expense_date = p.good_name, p.cost, p.expense_date
+    if not db.query(models.ProjectSupplier).get(p.supplier_id):
+        raise LookupError("Unknown supplier")
+    rec.supplier_id, rec.cost, rec.expense_date = p.supplier_id, p.cost, p.expense_date
     db.commit(); db.refresh(rec)
     return rec
 
@@ -158,3 +208,35 @@ def delete_project(db, project_id: int):
     if not rec:
         raise LookupError("Project entry not found")
     db.delete(rec); db.commit()
+
+
+def migrate_projects(db):
+    """One-time migration: the old project_expenses table stored a flat
+    good_name text field. Move that data under a 'General' category /
+    per-name supplier, then drop the old column. Safe to call on every
+    startup — it no-ops once the migration has already run."""
+    bind = db.get_bind()
+    insp = inspect(bind)
+    if "project_expenses" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("project_expenses")}
+    if "good_name" not in cols:
+        return  # already migrated
+    if "supplier_id" not in cols:
+        db.execute(text("ALTER TABLE project_expenses ADD COLUMN supplier_id INTEGER"))
+        db.commit()
+    general = get_or_create_category(db, "General")
+    db.flush()
+    rows = db.execute(text("SELECT id, good_name FROM project_expenses WHERE supplier_id IS NULL")).fetchall()
+    cache = {}
+    for rid, gname in rows:
+        key = (gname or "Unnamed").strip().lower()
+        if key not in cache:
+            cache[key] = get_or_create_supplier(db, general.id, (gname or "Unnamed").strip())
+            db.flush()
+        db.execute(text("UPDATE project_expenses SET supplier_id = :sid WHERE id = :rid"),
+                   {"sid": cache[key].id, "rid": rid})
+    db.commit()
+    db.execute(text("ALTER TABLE project_expenses ALTER COLUMN supplier_id SET NOT NULL"))
+    db.execute(text("ALTER TABLE project_expenses DROP COLUMN good_name"))
+    db.commit()
