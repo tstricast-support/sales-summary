@@ -92,7 +92,6 @@ function Notice({ m }) {
   return <p role="alert" className={`flex items-start gap-2 rounded-md p-3 text-sm ${cls}`}><Icon size={18} className="mt-0.5 shrink-0" />{m.m}</p>
 }
 
-/* ───────────── department panel: calendar + form + history chart ───────────── */
 function DeptPanel({ slug, defaultName = '', entryRef }) {
   const isAdmin = defaultName === 'Admin'
   const todayStr = iso(new Date())
@@ -101,7 +100,9 @@ function DeptPanel({ slug, defaultName = '', entryRef }) {
   const [date, setDate] = useState(todayStr)
   const [period, setPeriod] = useState({ month: todayStr.slice(0, 7), year: String(new Date().getFullYear()) })
   const [range, setRange] = useState('monthly')
-  const [entMonth, setEntMonth] = useState(todayStr.slice(0, 7))
+  const [customFrom, setCustomFrom] = useState(todayStr.slice(0, 8) + '01')
+  const [customTo, setCustomTo] = useState(todayStr)
+  const [customHist, setCustomHist] = useState([])
   const [tMode, setTMode] = useState('month')
   const [tDate, setTDate] = useState(todayStr)
   const [tMonth, setTMonth] = useState(todayStr.slice(0, 7))
@@ -126,6 +127,15 @@ function DeptPanel({ slug, defaultName = '', entryRef }) {
   }, [slug])
 
   useEffect(() => { setHist(store.get('hist:' + slug, [])); setToast(null); refresh() }, [slug, refresh])
+
+  useEffect(() => {
+    if (range !== 'custom' || !customFrom || !customTo || customFrom > customTo) return
+    let live = true
+    call(`/api/records?department=${slug}&start=${customFrom}&end=${customTo}`).then(r => r.json())
+      .then(d => live && setCustomHist(d))
+      .catch(() => live && setCustomHist(hist.filter(r => r.record_date >= customFrom && r.record_date <= customTo)))
+    return () => { live = false }
+  }, [range, slug, customFrom, customTo, hist])
 
   // prefill the form when an existing day is selected
   useEffect(() => {
@@ -238,26 +248,43 @@ useEffect(() => {
   return () => { live = false }
 }, [slug, totalRange.start, totalRange.end, hist])
 
-  // chart data: weekly = last 7 days, monthly = last 30 days, yearly = per month (last 12)
+  const customInvalid = range === 'custom' && (!customFrom || !customTo || customFrom > customTo)
+
+  // the date span currently driving BOTH the graph and Recent Entries below it
+  const graphRange = (() => {
+    if (range === 'custom') return { start: customFrom, end: customTo }
+    if (range === 'yearly') { const s = new Date(); s.setDate(s.getDate() - 364); return { start: iso(s), end: todayStr } }
+    const s = new Date(); s.setDate(s.getDate() - (range === 'weekly' ? 6 : 29))
+    return { start: iso(s), end: todayStr }
+  })()
+
+  // custom uses its own fetched dataset (can span further back than the 364-day `hist` cache)
+  const sourceHist = range === 'custom' ? customHist : hist
+
+  // chart data: weekly = last 7 days, monthly = last 30 days, yearly = per month (last 12),
+  // custom = user-selected range (bucketed by day if <=31 days, else by month, like yearly)
   const chartData = (() => {
-    if (range === 'yearly') {
+    const bucketByMonth = range === 'yearly' ||
+      (range === 'custom' && !customInvalid && (new Date(graphRange.end) - new Date(graphRange.start)) / 86400000 > 31)
+    const inRange = sourceHist.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
+    if (bucketByMonth) {
       const m = {}
-      hist.forEach(r => {
+      inRange.forEach(r => {
         const k = r.record_date.slice(0, 7)
         m[k] = m[k] || { date: k, Sales: 0, Collection: 0 }
         m[k].Sales += Number(r.sales_amount); m[k].Collection += Number(r.collection_amount)
       })
       return Object.values(m).sort((a, b) => a.date.localeCompare(b.date)).slice(-12)
     }
-    const from = new Date(); from.setDate(from.getDate() - (range === 'weekly' ? 6 : 29))
-    return hist.filter(r => r.record_date >= iso(from)).sort((a, b) => a.record_date.localeCompare(b.record_date))
+    return inRange.sort((a, b) => a.record_date.localeCompare(b.record_date))
       .map(r => ({ date: r.record_date.slice(5), Sales: Number(r.sales_amount), Collection: Number(r.collection_amount) }))
   })()
-  const rangeLabel = { weekly: 'LAST 7 DAYS', monthly: 'LAST 30 DAYS', yearly: 'LAST 12 MONTHS' }[range]
+  const rangeLabel = { weekly: 'LAST 7 DAYS', monthly: 'LAST 30 DAYS', yearly: 'LAST 12 MONTHS', custom: `${graphRange.start} → ${graphRange.end}` }[range]
 
-  const rows = hist.filter(r => r.record_date.startsWith(entMonth)).sort((a, b) => b.record_date.localeCompare(a.record_date))
+  // Recent Entries follows the same filter as the graph above (weekly/monthly/yearly/custom) — no separate month picker
+  const rows = sourceHist.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
+    .sort((a, b) => b.record_date.localeCompare(a.record_date))
   const seg = on => `rounded-md border px-3 py-1.5 text-sm font-medium ${on ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -303,10 +330,21 @@ useEffect(() => {
       <section className="card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold uppercase">Sales & Collection Trend – {rangeLabel}</h2>
-          <div className="flex gap-2">
-            {['weekly', 'monthly', 'yearly'].map(k => <button key={k} onClick={() => setRange(k)} className={`${seg(range === k)} capitalize`}>{k}</button>)}
+          <div className="flex flex-wrap gap-2">
+            {['weekly', 'monthly', 'yearly', 'custom'].map(k => <button key={k} onClick={() => setRange(k)} className={`${seg(range === k)} capitalize`}>{k}</button>)}
           </div>
         </div>
+        {range === 'custom' && (
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:max-w-md">
+            <label className="block min-w-0 text-xs font-medium">From
+              <input type="date" className="input mt-1 min-w-0" value={customFrom} max={customTo || todayStr}
+                onChange={e => e.target.value && setCustomFrom(e.target.value)} /></label>
+            <label className="block min-w-0 text-xs font-medium">To
+              <input type="date" className="input mt-1 min-w-0" value={customTo} min={customFrom} max={todayStr}
+                onChange={e => e.target.value && setCustomTo(e.target.value)} /></label>
+          </div>
+        )}
+        {customInvalid && <p className="mb-3 text-xs text-red-700">From date must be on or before the To date.</p>}
         {chartData.length ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -321,12 +359,11 @@ useEffect(() => {
         ) : <p className="py-16 text-center text-ink/60">No entries in this period. Tap + ENTRY to add one.</p>}
       </section>
 
-      {/* 2. RECENT ENTRIES */}
+      {/* 2. RECENT ENTRIES — filtered by the same date range selected for the graph above */}
       <section className="card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold uppercase">Recent Entries</h2>
-          <input type="month" className="input !w-auto" value={entMonth} max={todayStr.slice(0, 7)}
-            onChange={e => e.target.value && setEntMonth(e.target.value)} aria-label="Filter by month" />
+          <p className="text-xs text-ink/60">{graphRange.start} → {graphRange.end}</p>
         </div>
         <div className="max-h-96 overflow-auto">
           <table className="w-full text-left text-sm">
@@ -344,7 +381,7 @@ useEffect(() => {
                   </td>
                 </tr>
               ))}
-              {!rows.length && <tr><td colSpan={4} className="py-6 text-center text-ink/60">No entries in {entMonth}.</td></tr>}
+              {!rows.length && <tr><td colSpan={4} className="py-6 text-center text-ink/60">No entries in this period.</td></tr>}
             </tbody>
           </table>
         </div>
