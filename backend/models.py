@@ -32,9 +32,12 @@ class DailyRecord(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True)
-    record_id = Column(Integer, ForeignKey("daily_records.id"), nullable=False, index=True)
+    record_id = Column(Integer, ForeignKey("daily_records.id", ondelete="SET NULL"), nullable=True, index=True)
+    department_slug = Column(String(50))
+    department_name = Column(String(100))
+    record_date = Column(Date)
     changed_by = Column(String(60), nullable=False)
-    action_type = Column(String(10), nullable=False)  # CREATE | UPDATE
+    action_type = Column(String(10), nullable=False)  # CREATE | UPDATE | DELETE
     old_sales = Column(Numeric(14, 2))
     new_sales = Column(Numeric(14, 2))
     old_collection = Column(Numeric(14, 2))

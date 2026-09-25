@@ -27,11 +27,13 @@ def upsert_record(db, d: schemas.RecordIn, commit=True):
                                  collection_amount=d.collection_amount, submitted_by=d.submitted_by)
         db.add(rec); db.flush()
         db.add(models.AuditLog(record_id=rec.id, changed_by=d.submitted_by, action_type="CREATE",
-                               new_sales=d.sales_amount, new_collection=d.collection_amount))
+                               new_sales=d.sales_amount, new_collection=d.collection_amount,
+                               department_slug=dept.slug, department_name=dept.name, record_date=rec.record_date))
     elif rec.sales_amount != d.sales_amount or rec.collection_amount != d.collection_amount:
         db.add(models.AuditLog(record_id=rec.id, changed_by=d.submitted_by, action_type="UPDATE",
                                old_sales=rec.sales_amount, new_sales=d.sales_amount,
-                               old_collection=rec.collection_amount, new_collection=d.collection_amount))
+                               old_collection=rec.collection_amount, new_collection=d.collection_amount,
+                               department_slug=dept.slug, department_name=dept.name, record_date=rec.record_date))
         rec.sales_amount, rec.collection_amount, rec.submitted_by = d.sales_amount, d.collection_amount, d.submitted_by
     if commit:
         db.commit(); db.refresh(rec)
@@ -85,14 +87,13 @@ def summary(db, start, end):
 
 
 def audit(db, start, end, slug=None):
-    A, R = models.AuditLog, models.DailyRecord
-    q = (db.query(A).options(joinedload(A.record).joinedload(R.department)).join(R).join(models.Department)
-         .filter(R.record_date.between(start, end)))
+    A = models.AuditLog
+    q = db.query(A).filter(A.record_date.between(start, end))
     if slug:
-        q = q.filter(models.Department.slug == slug)
+        q = q.filter(A.department_slug == slug)
     f = lambda v: None if v is None else float(v)
     return [{"id": a.id, "timestamp": a.timestamp.isoformat(), "changed_by": a.changed_by, "action_type": a.action_type,
-             "department": a.record.department.name, "record_date": str(a.record.record_date),
+             "department": a.department_name, "record_date": str(a.record_date),
              "old_sales": f(a.old_sales), "new_sales": f(a.new_sales),
              "old_collection": f(a.old_collection), "new_collection": f(a.new_collection)}
             for a in q.order_by(A.timestamp.desc()).limit(500).all()]
@@ -131,8 +132,12 @@ def delete_record(db, record_id: int):
     rec = db.query(models.DailyRecord).get(record_id)
     if not rec:
         raise LookupError("Record not found")
-    db.delete(rec); db.commit()
-    
+    dept = rec.department
+    db.add(models.AuditLog(record_id=rec.id, changed_by=rec.submitted_by, action_type="DELETE",
+                           old_sales=rec.sales_amount, old_collection=rec.collection_amount,
+                           department_slug=dept.slug, department_name=dept.name, record_date=rec.record_date))
+    db.commit()
+    db.delete(rec); db.commit()  
 
 def list_categories(db):
     return db.query(models.ProjectCategory).order_by(models.ProjectCategory.name).all()
@@ -152,6 +157,18 @@ def add_category(db, c: schemas.CategoryIn):
     db.commit(); db.refresh(cat)
     return cat
 
+def update_category(db, category_id: int, c: schemas.CategoryIn):
+    cat = db.query(models.ProjectCategory).get(category_id)
+    if not cat:
+        raise LookupError("Category not found")
+    dup = (db.query(models.ProjectCategory)
+           .filter(func.lower(models.ProjectCategory.name) == c.name.lower(), models.ProjectCategory.id != category_id)
+           .first())
+    if dup:
+        raise ValueError("Another category already has this name")
+    cat.name = c.name
+    db.commit(); db.refresh(cat)
+    return cat
 
 def list_suppliers(db, category_id: int | None = None):
     q = db.query(models.ProjectSupplier)
@@ -177,6 +194,21 @@ def add_supplier(db, s: schemas.SupplierIn):
     db.commit(); db.refresh(sup)
     return sup
 
+def update_supplier(db, supplier_id: int, s: schemas.SupplierIn):
+    sup = db.query(models.ProjectSupplier).get(supplier_id)
+    if not sup:
+        raise LookupError("Supplier not found")
+    if not db.query(models.ProjectCategory).get(s.category_id):
+        raise LookupError("Unknown category")
+    dup = (db.query(models.ProjectSupplier)
+           .filter_by(category_id=s.category_id)
+           .filter(func.lower(models.ProjectSupplier.name) == s.name.lower(), models.ProjectSupplier.id != supplier_id)
+           .first())
+    if dup:
+        raise ValueError("Another supplier already has this name in that category")
+    sup.category_id, sup.name = s.category_id, s.name
+    db.commit(); db.refresh(sup)
+    return sup
 
 def list_projects(db):
     return (db.query(models.ProjectExpense)
@@ -239,4 +271,32 @@ def migrate_projects(db):
     db.commit()
     db.execute(text("ALTER TABLE project_expenses ALTER COLUMN supplier_id SET NOT NULL"))
     db.execute(text("ALTER TABLE project_expenses DROP COLUMN good_name"))
+    db.commit()
+
+def migrate_audit_logs(db):
+    """One-time migration: audit_logs used to require a live daily_records
+    row via a plain (no-action) FK, so deleting a record with history
+    crashed. Denormalize department/date onto the audit row and relax the
+    FK to ON DELETE SET NULL. Safe to call on every startup."""
+    bind = db.get_bind()
+    insp = inspect(bind)
+    if "audit_logs" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("audit_logs")}
+    if "department_slug" not in cols:
+        db.execute(text("ALTER TABLE audit_logs ADD COLUMN department_slug VARCHAR(50)"))
+    if "department_name" not in cols:
+        db.execute(text("ALTER TABLE audit_logs ADD COLUMN department_name VARCHAR(100)"))
+    if "record_date" not in cols:
+        db.execute(text("ALTER TABLE audit_logs ADD COLUMN record_date DATE"))
+    db.commit()
+    db.execute(text("""
+        UPDATE audit_logs a SET department_slug = d.slug, department_name = d.name, record_date = r.record_date
+        FROM daily_records r JOIN departments d ON d.id = r.department_id
+        WHERE a.record_id = r.id AND a.record_date IS NULL
+    """))
+    db.execute(text("ALTER TABLE audit_logs ALTER COLUMN record_id DROP NOT NULL"))
+    db.execute(text("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_record_id_fkey"))
+    db.execute(text("ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_record_id_fkey "
+                     "FOREIGN KEY (record_id) REFERENCES daily_records(id) ON DELETE SET NULL"))
     db.commit()

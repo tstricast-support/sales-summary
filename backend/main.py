@@ -19,6 +19,7 @@ async def lifespan(app):
     with SessionLocal() as db:
         crud.seed_departments(db)
         crud.migrate_projects(db)
+        crud.migrate_audit_logs(db)
     yield
 
 
@@ -171,6 +172,24 @@ def add_project_supplier(data: schemas.SupplierIn, db: Session = Depends(get_db)
     except LookupError as e:
         raise HTTPException(404, str(e))
 
+@app.put("/api/project-categories/{category_id}", response_model=schemas.CategoryOut)
+def edit_project_category(category_id: int, data: schemas.CategoryIn, db: Session = Depends(get_db)):
+    try:
+        return crud.update_category(db, category_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.put("/api/project-suppliers/{supplier_id}", response_model=schemas.SupplierOut)
+def edit_project_supplier(supplier_id: int, data: schemas.SupplierIn, db: Session = Depends(get_db)):
+    try:
+        return crud.update_supplier(db, supplier_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 @app.get("/api/projects", response_model=list[schemas.ProjectOut])
 def projects(db: Session = Depends(get_db)):

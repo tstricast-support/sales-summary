@@ -965,9 +965,9 @@ function AdminNav() {
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
       <div className="flex flex-wrap gap-2">
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
-        <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
         <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>I PHO. DAM</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
+        <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
       </div>
     </nav>
   )
@@ -1095,6 +1095,52 @@ function Dashboard() {
   const [depOpen, setDepOpen] = useState(false)
   const [logOpen, setLogOpen] = useState(false)
 
+  const [manageOpen, setManageOpen] = useState(false)
+  const [categories, setCategories] = useState([])
+  const [suppliers, setSuppliers] = useState([])
+  const [editingCat, setEditingCat] = useState(null)
+  const [editingSup, setEditingSup] = useState(null)
+  const [editName, setEditName] = useState('')
+  const [catBusy, setCatBusy] = useState(false)
+  const [manageErr, setManageErr] = useState('')
+
+  const loadCatSup = useCallback(async () => {
+    try {
+      const [c, s] = await Promise.all([
+        call('/api/project-categories').then(r => r.json()),
+        call('/api/project-suppliers').then(r => r.json()),
+      ])
+      setCategories(c); setSuppliers(s)
+    } catch { setManageErr('Could not load categories/suppliers.') }
+  }, [])
+  useEffect(() => { loadCatSup() }, [loadCatSup])
+
+  const startEditCat = c => { setEditingSup(null); setEditingCat(c.id); setEditName(c.name); setManageErr('') }
+  const startEditSup = s => { setEditingCat(null); setEditingSup(s.id); setEditName(s.name); setManageErr('') }
+  const cancelEdit = () => { setEditingCat(null); setEditingSup(null); setEditName('') }
+
+  const saveCategory = async id => {
+    const name = editName.trim()
+    if (!name) return setManageErr('Enter a category name.')
+    setCatBusy(true)
+    try {
+      await call(`/api/project-categories/${id}`, { method: 'PUT', body: JSON.stringify({ name }) })
+      cancelEdit(); await loadCatSup()
+    } catch (e) { setManageErr(e.message || 'Could not rename category.') }
+    setCatBusy(false)
+  }
+
+  const saveSupplier = async s => {
+    const name = editName.trim()
+    if (!name) return setManageErr('Enter a supplier name.')
+    setCatBusy(true)
+    try {
+      await call(`/api/project-suppliers/${s.id}`, { method: 'PUT', body: JSON.stringify({ category_id: s.category_id, name }) })
+      cancelEdit(); await loadCatSup()
+    } catch (e) { setManageErr(e.message || 'Could not rename supplier.') }
+    setCatBusy(false)
+  }
+
   const load = useCallback(async () => {
     setErr('')
     try {
@@ -1168,6 +1214,60 @@ function Dashboard() {
           <select className="input !w-auto" value={ov} onChange={e => setOv(e.target.value)}>
             <option value="">Choose department…</option>{DEPTS.map(d => <option key={d.slug} value={d.slug}>{d.name}</option>)}</select></div>
         {ov && <div className="mt-4"><DeptPanel key={ov} slug={ov} defaultName="Admin" /></div>}
+      </section>
+
+      {/* CATEGORIES & SUPPLIERS (fold up) */}
+      <section className="card no-print">
+        <button className="flex w-full items-center justify-between gap-2 text-left" onClick={() => setManageOpen(o => !o)} aria-expanded={manageOpen}>
+          <h2 className="font-semibold uppercase">Categories & Suppliers</h2>{chev(manageOpen)}
+        </button>
+        {manageOpen && (
+          <div className="mt-3 space-y-3">
+            <Notice m={manageErr && { t: 'err', m: manageErr }} />
+            {categories.map(c => (
+              <div key={c.id} className="rounded-lg border border-ink/10 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  {editingCat === c.id ? (
+                    <div className="flex flex-1 flex-wrap items-center gap-2">
+                      <input className="input flex-1" value={editName} onChange={e => setEditName(e.target.value)} autoFocus />
+                      <button className="btn !px-3" disabled={catBusy} onClick={() => saveCategory(c.id)}>Save</button>
+                      <button className="btn-ghost !px-3" onClick={cancelEdit}>Cancel</button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="font-semibold">{c.name}</span>
+                      <button className="btn-ghost !px-2 !py-1" onClick={() => startEditCat(c)} aria-label={`Edit ${c.name}`}>
+                        <Pencil size={14} />Edit
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="mt-2 space-y-1.5 pl-3">
+                  {suppliers.filter(s => s.category_id === c.id).map(s => (
+                    <div key={s.id} className="flex items-center justify-between gap-2 border-t border-ink/5 pt-1.5 first:border-t-0 first:pt-0">
+                      {editingSup === s.id ? (
+                        <div className="flex flex-1 flex-wrap items-center gap-2">
+                          <input className="input flex-1" value={editName} onChange={e => setEditName(e.target.value)} autoFocus />
+                          <button className="btn !px-3" disabled={catBusy} onClick={() => saveSupplier(s)}>Save</button>
+                          <button className="btn-ghost !px-3" onClick={cancelEdit}>Cancel</button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-sm text-ink/80">{s.name}</span>
+                          <button className="btn-ghost !px-2 !py-1" onClick={() => startEditSup(s)} aria-label={`Edit ${s.name}`}>
+                            <Pencil size={14} />Edit
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                  {!suppliers.some(s => s.category_id === c.id) && <p className="text-xs text-ink/50">No suppliers yet.</p>}
+                </div>
+              </div>
+            ))}
+            {!categories.length && <p className="py-4 text-center text-ink/60">No categories yet. Add one from the Project page.</p>}
+          </div>
+        )}
       </section>
 
       {/* DEPARTMENTS (fold up) */}
