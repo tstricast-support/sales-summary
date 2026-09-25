@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState,useRef } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
 import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2 } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
@@ -25,6 +25,7 @@ const deptName = s => DEPTS.find(d => d.slug === s)?.name || s
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // dd/mm/yyyy — the date format used in Sri Lanka
+const shortMoney = n => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 const sriDate = isoStr => { const [y, m, d] = isoStr.split('-'); return `${d}/${m}/${y}` }
 const within24h = createdAt => createdAt && (Date.now() - new Date(createdAt).getTime()) < 86400000
 const store = {
@@ -92,7 +93,7 @@ function Notice({ m }) {
 }
 
 /* ───────────── department panel: calendar + form + history chart ───────────── */
-function DeptPanel({ slug, defaultName = '' }) {
+function DeptPanel({ slug, defaultName = '', entryRef }) {
   const isAdmin = defaultName === 'Admin'
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
@@ -111,6 +112,9 @@ function DeptPanel({ slug, defaultName = '' }) {
   const [msg, setMsg] = useState(null)
   const [toast, setToast] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [tOpen, setTOpen] = useState(false)
+  const tRef = useRef(null)
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 640px)').matches)
 
 
   const refresh = useCallback(async () => {
@@ -137,7 +141,25 @@ function DeptPanel({ slug, defaultName = '' }) {
     return () => window.removeEventListener('keydown', h)
   }, [open])
 
-  const openEntry = d => { setMode('day'); setDate(d || todayStr); setMsg(null); setOpen(true) }
+  useEffect(() => {
+  const mq = window.matchMedia('(min-width: 640px)')
+  const h = e => setIsDesktop(e.matches)
+  mq.addEventListener('change', h)
+  return () => mq.removeEventListener('change', h)
+  }, [])
+
+  useEffect(() => {
+    if (!tOpen) return
+    const close = e => { if (tRef.current && !tRef.current.contains(e.target)) setTOpen(false) }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [tOpen])
+
+const openEntry = useCallback(d => { setMode('day'); setDate(d || todayStr); setMsg(null); setOpen(true) }, [todayStr])
+
+  useEffect(() => {
+  if (entryRef) entryRef.current = openEntry
+}, [entryRef, openEntry])
 
   const removeEntry = async r => {
   if (!window.confirm(`Delete the entry for ${r.record_date}?`)) return
@@ -238,10 +260,43 @@ useEffect(() => {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-bold uppercase">{deptName(slug)}</h2>
-        <button className="btn" onClick={() => openEntry()}>+ ENTRY</button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+  <div ref={tRef} className="relative w-full sm:w-auto">
+    <button onClick={() => setTOpen(o => !o)} aria-expanded={tOpen}
+      className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30 sm:w-auto">
+      <span className="flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:flex-none">
+        <span className="block text-xs uppercase text-ink/60">Sales</span>
+        <span className="block text-lg font-bold text-sale">{money(tot.sales)}</span>
+      </span>
+      <span className="flex-1 bg-orange-50 px-4 py-2.5 text-left sm:flex-none">
+        <span className="block text-xs uppercase text-ink/60">Collection</span>
+        <span className="block text-lg font-bold text-coll">{money(tot.collection)}</span>
+      </span>
+    </button>
+    {tOpen && (
+      <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:right-auto sm:w-72">
+        <p className="text-xs font-semibold uppercase text-ink/60">{totalRange.label}</p>
+        <div className="grid grid-cols-2 gap-2">
+          {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']].map(([k, l]) => (
+            <button key={k} onClick={() => setTMode(k)} className={seg(tMode === k)}>{l}</button>
+          ))}
+        </div>
+        {(tMode === 'date' || tMode === 'week') && (
+          <input type="date" className="input" max={todayStr} value={tDate} onChange={e => e.target.value && setTDate(e.target.value)} />
+        )}
+        {tMode === 'month' && (
+          <input type="month" className="input" max={todayStr.slice(0, 7)} value={tMonth} onChange={e => e.target.value && setTMonth(e.target.value)} />
+        )}
+        {tMode === 'year' && (
+          <input type="number" className="input" min="2000" max={new Date().getFullYear()} value={tYear} onChange={e => setTYear(e.target.value)} />
+        )}
+        <p className="text-xs text-ink/60">{tot.days} day{tot.days === 1 ? '' : 's'} with entries.</p>
       </div>
+    )}
+  </div>
+</div>
+
+
       <Notice m={toast} />
 
       {/* 1. GRAPH */}
@@ -256,8 +311,12 @@ useEffect(() => {
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="date" fontSize={12} /><YAxis fontSize={12} width={60} /><Tooltip formatter={v => money(v)} /><Legend />
-              <Line type="monotone" dataKey="Sales" stroke="#0f766e" strokeWidth={2} dot={chartData.length < 15} />
-              <Line type="monotone" dataKey="Collection" stroke="#c2410c" strokeWidth={2} dot={chartData.length < 15} /></LineChart>
+              <Line type="monotone" dataKey="Sales" stroke="#0f766e" strokeWidth={2} dot={chartData.length < 15}>
+                {isDesktop && <LabelList dataKey="Sales" position="top" formatter={shortMoney} style={{ fontSize: 10, fill: '#0f766e', fontWeight: 600 }} />}
+              </Line>
+              <Line type="monotone" dataKey="Collection" stroke="#c2410c" strokeWidth={2} dot={chartData.length < 15}>
+                {isDesktop && <LabelList dataKey="Collection" position="bottom" formatter={shortMoney} style={{ fontSize: 10, fill: '#c2410c', fontWeight: 600 }} />}
+              </Line></LineChart>
           </ResponsiveContainer>
         ) : <p className="py-16 text-center text-ink/60">No entries in this period. Tap + ENTRY to add one.</p>}
       </section>
@@ -293,7 +352,7 @@ useEffect(() => {
       </section>
 
       {/* 3. TOTAL */}
-    <section className="card">
+    {/* <section className="card">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold uppercase">Total – {totalRange.label}</h2>
         <div className="flex gap-2">
@@ -319,7 +378,7 @@ useEffect(() => {
         <div className="rounded-md bg-orange-50 p-3"><p className="text-xs uppercase text-ink/70">Collection</p><p className="text-xl font-bold text-coll">{money(tot.collection)}</p></div>
       </div>
       <p className="mt-2 text-xs text-ink/60">{tot.days} day{tot.days === 1 ? '' : 's'} with entries in this period.</p>
-    </section>
+    </section> */}
 
       {/* +ENTRY POPUP */}
       {open && (
@@ -390,6 +449,7 @@ function DepartmentPage({ page }) {
   const [sp] = useSearchParams()
   const [tab, setTab] = useState(slugs.includes(sp.get('tab')) ? sp.get('tab') : slugs[0])
   const fromAdmin = useLocation().state?.admin
+  const entryRef = useRef(null)
 
   useEffect(() => {
   const link = document.querySelector('link[rel="manifest"]')
@@ -405,9 +465,12 @@ function DepartmentPage({ page }) {
           <ArrowLeft size={16} />Back to home
         </Link>
       )}
-      <header className="flex items-center gap-3">
-        {slugs.map(s => <Logo key={s} slug={s} className="h-14 w-14 sm:h-16 sm:w-16" />)}
-        <h1 className="text-2xl font-bold sm:text-3xl">{title}</h1>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          {slugs.map(s => <Logo key={s} slug={s} className="h-14 w-14 sm:h-16 sm:w-16" />)}
+          <h1 className="text-2xl font-bold sm:text-3xl">{title}</h1>
+        </div>
+        <button className="btn" onClick={() => entryRef.current?.()}>+ ENTRY</button>
       </header>
       {slugs.length > 1 && (
         <div role="tablist" className="flex gap-2">
@@ -418,7 +481,7 @@ function DepartmentPage({ page }) {
           ))}
         </div>
       )}
-      <DeptPanel key={tab} slug={tab} />
+      <DeptPanel key={tab} slug={tab} entryRef={entryRef} />
     </main>
   )
 }
@@ -686,9 +749,9 @@ function AdminNav() {
     <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
       <div className="flex flex-wrap gap-2">
-        <NavLink to="/admin/departments" className={link}><Building2 size={18} />Departments</NavLink>
+        <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
         <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
-        <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}><Logo slug="i-photobook" className="h-[18px] w-[18px]" />I PHO. DAM</NavLink>
+        <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>I PHO. DAM</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
       </div>
     </nav>
@@ -789,7 +852,7 @@ function Departments() {
 
   return (
     <main className="mx-auto max-w-6xl p-4">
-      <h1 className="mb-3 text-2xl font-bold">Departments</h1>
+      <h1 className="mb-3 text-2xl font-bold">DEPARTMENTS</h1>
       <div className="mb-3 space-y-3">
       <div className="flex gap-2">
         {[['today', 'TODAY'], ['custom', 'CUSTOM']].map(([k, l]) => (
