@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, AlertTriangle } from 'lucide-react'
+import Calendar from 'react-calendar'
+import 'react-calendar/dist/Calendar.css'
+
 /* ───────────── config & helpers ───────────── */
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const NAME_RE = /^[A-Za-z][A-Za-z .'-]{1,59}$/
@@ -21,6 +24,8 @@ const PAGES = {
 const deptName = s => DEPTS.find(d => d.slug === s)?.name || s
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+// dd/mm/yyyy — the date format used in Sri Lanka
+const sriDate = isoStr => { const [y, m, d] = isoStr.split('-'); return `${d}/${m}/${y}` }
 const store = {
   get: (k, f) => { try { return JSON.parse(localStorage.getItem(k)) ?? f } catch { return f } },
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch { /* storage full/blocked */ } },
@@ -58,6 +63,18 @@ async function flushQueue() {
     catch (e) { if (!e.status) left.push(item) } // keep only network failures; drop rejected items
   }
   store.set('queue', left)
+  return q.length - left.length
+}
+
+async function flushDamageQueue() {
+  const q = store.get('damageQueue', [])
+  if (!q.length || !navigator.onLine) return 0
+  const left = []
+  for (const item of q) {
+    try { await call('/api/damages', { method: 'POST', body: JSON.stringify(item) }) }
+    catch (e) { if (!e.status) left.push(item) }
+  }
+  store.set('damageQueue', left)
   return q.length - left.length
 }
 
@@ -306,8 +323,25 @@ useEffect(() => {
               ))}
             </div>
             {mode === 'day' && (
-              <label className="block text-sm font-medium">Date
-                <input className="input mt-1" type="date" max={todayStr} value={date} onChange={e => setDate(e.target.value)} required /></label>
+              <div>
+                <p className="mb-1 text-sm font-medium">Date <span className="font-normal text-ink/60">— {date}</span></p>
+                <Calendar
+                  value={new Date(date + 'T00:00:00')}
+                  onChange={d => setDate(iso(d))}
+                  maxDate={new Date()}
+                  locale="en-GB"
+                  calendarType="iso8601"
+                  className="mini-cal"
+                  tileClassName={({ date: d, view }) => {
+                    if (view !== 'month') return null
+                    const cls = []
+                    if (hist.some(x => x.record_date === iso(d))) cls.push('has-rec')
+                    if (d.getDay() === 6) cls.push('sat-col')
+                    if (d.getDay() === 0) cls.push('sun-col')
+                    return cls.join(' ')
+                  }}
+                />
+              </div>
             )}
             {mode === 'month' && (
               <label className="block text-sm font-medium">Month
@@ -375,6 +409,114 @@ function DepartmentPage({ page }) {
   )
 }
 
+function DamagePage() {
+  const fromAdmin = useLocation().state?.admin
+  const todayStr = iso(new Date())
+  const [open, setOpen] = useState(false)
+  const [date, setDate] = useState(todayStr)
+  const [rows, setRows] = useState(() => store.get('damages', []))
+  const [f, setF] = useState({ printing: '', accubind: '', binding: '', by: localStorage.getItem('by') || '' })
+  const [msg, setMsg] = useState(null)
+  const [toast, setToast] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const data = await (await call('/api/damages')).json()
+      setRows(data); store.set('damages', data)
+    } catch { /* offline: keep cached history */ }
+  }, [])
+  useEffect(() => { refresh() }, [refresh])
+
+  const submit = async e => {
+    e.preventDefault(); setMsg(null)
+    const by = f.by.trim().replace(/\s+/g, ' ')
+    if (!NAME_RE.test(by)) return setMsg({ t: 'err', m: "Enter your name: 2–60 characters, letters, spaces, . ' or - only." })
+    const p = parseFloat(f.printing) || 0, a = parseFloat(f.accubind) || 0, b = parseFloat(f.binding) || 0
+    if (p < 0 || a < 0 || b < 0) return setMsg({ t: 'err', m: 'Damage values must be 0 or more.' })
+    if (!date || date > todayStr) return setMsg({ t: 'err', m: 'Choose a date that is today or earlier.' })
+    localStorage.setItem('by', by)
+    const body = { record_date: date, printing_damage: p, accubind_damage: a, binding_damage: b, submitted_by: by }
+    setBusy(true)
+    try {
+      await call('/api/damages', { method: 'POST', body: JSON.stringify(body) })
+      setToast({ t: 'ok', m: `Damage entry saved for ${sriDate(date)}.` })
+      setOpen(false); setF({ printing: '', accubind: '', binding: '', by })
+      await refresh()
+    } catch (err) {
+      if (err.status) setMsg({ t: 'err', m: err.message })
+      else {
+        const q = store.get('damageQueue', []); store.set('damageQueue', [...q, body])
+        setRows([{ ...body, id: 'local-' + Date.now() }, ...rows])
+        setToast({ t: 'warn', m: 'You are offline. Entry stored on this device and will sync automatically.' }); setOpen(false)
+      }
+    }
+    setBusy(false)
+  }
+
+  return (
+    <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
+      {fromAdmin && (
+        <Link to="/admin/departments" className="btn-ghost w-fit"><ArrowLeft size={16} />Back to home</Link>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="flex items-center gap-2 text-2xl font-bold uppercase"><AlertTriangle size={24} />I Photobook — Damage Log</h1>
+        {!fromAdmin && <button className="btn" onClick={() => { setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>}
+      </div>
+      <Notice m={toast} />
+
+      <section className="card">
+        <h2 className="mb-2 font-semibold uppercase">Damage History</h2>
+        <div className="max-h-[70vh] overflow-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
+              <th className="py-2">Date</th><th className="text-right">Printing</th><th className="text-right">Accubind</th><th className="text-right">Binding</th><th className="pl-4">By</th></tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id} className="border-b border-ink/5">
+                  <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
+                  <td className="text-right">{money(r.printing_damage)}</td>
+                  <td className="text-right">{money(r.accubind_damage)}</td>
+                  <td className="text-right">{money(r.binding_damage)}</td>
+                  <td className="pl-4">{r.submitted_by}</td>
+                </tr>
+              ))}
+              {!rows.length && <tr><td colSpan={5} className="py-6 text-center text-ink/60">No damage entries yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {open && !fromAdmin && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
+          <form role="dialog" aria-modal="true" aria-label="Add damage entry" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
+            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold uppercase">Add Damage Entry</h2>
+              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
+            </div>
+            <label className="block text-sm font-medium">Date
+              <input className="input mt-1" type="date" max={todayStr} value={date} onChange={e => setDate(e.target.value)} required /></label>
+            <label className="block text-sm font-medium">Printing damage
+              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.printing} onChange={e => setF({ ...f, printing: e.target.value })} /></label>
+            <label className="block text-sm font-medium">Accubind damage
+              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.accubind} onChange={e => setF({ ...f, accubind: e.target.value })} /></label>
+            <label className="block text-sm font-medium">Binding damage
+              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.binding} onChange={e => setF({ ...f, binding: e.target.value })} /></label>
+            <label className="block text-sm font-medium">Your name
+              <input className="input mt-1" value={f.by} maxLength={60} autoComplete="name" placeholder="e.g. Nimal Perera" onChange={e => setF({ ...f, by: e.target.value })} required /></label>
+            <Notice m={msg} />
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
+              <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save entry'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </main>
+  )
+}
+
 function AdminShell() {
   const link = ({ isActive }) => `flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium sm:flex-none ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
   return (
@@ -384,6 +526,7 @@ function AdminShell() {
         <div className="flex gap-2">
           <NavLink to="/admin/departments" className={link}><Building2 size={18} />Departments</NavLink>
           <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
+          <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}><AlertTriangle size={18} />I PHO. DAM</NavLink>
         </div>
       </nav>
       <Outlet />
@@ -394,7 +537,7 @@ function AdminShell() {
 function TotalsCard() {
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
-  const [kind, setKind] = useState('today')
+  const [kind, setKind] = useState('monthly')
   const [from, setFrom] = useState(todayStr.slice(0, 8) + '01')
   const [to, setTo] = useState(todayStr)
   const [tot, setTot] = useState({ sales: 0, collection: 0 })
@@ -668,12 +811,12 @@ function Dashboard() {
 /* ───────────── app root ───────────── */
 export default function App() {
   const [online, setOnline] = useState(navigator.onLine)
-  const [pending, setPending] = useState(store.get('queue', []).length)
-  useEffect(() => {
-    const sync = async () => { await flushQueue(); setPending(store.get('queue', []).length) }
+  const [pending, setPending] = useState(store.get('queue', []).length + store.get('damageQueue', []).length)
+useEffect(() => {
+    const sync = async () => { await flushQueue(); await flushDamageQueue(); setPending(store.get('queue', []).length + store.get('damageQueue', []).length) }
     const on = () => { setOnline(true); sync() }, off = () => setOnline(false)
     window.addEventListener('online', on); window.addEventListener('offline', off)
-    const t = setInterval(() => setPending(store.get('queue', []).length), 3000)
+    const t = setInterval(() => setPending(store.get('queue', []).length + store.get('damageQueue', []).length), 3000)
     sync()
     return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); clearInterval(t) }
   }, [])
@@ -691,6 +834,7 @@ export default function App() {
           <Route path="departments" element={<Departments />} />
         </Route>
         {Object.keys(PAGES).map(p => <Route key={p} path={`/department/${p}`} element={<DepartmentPage page={p} />} />)}
+        <Route path="/department/i-photobook-damage" element={<DamagePage />} />
         <Route path="*" element={<Navigate to="/admin/departments" replace />} />
       </Routes>
     </BrowserRouter>

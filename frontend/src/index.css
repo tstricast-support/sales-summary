@@ -8,12 +8,22 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
 .btn { @apply inline-flex items-center justify-center gap-2 rounded-md bg-ink px-4 py-2 font-medium text-white hover:bg-ink/90 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-accent; }
 .btn-ghost { @apply inline-flex items-center gap-2 rounded-md border border-ink/20 bg-white px-3 py-2 text-sm font-medium hover:bg-ink/5; }
 
-.react-calendar { width: 100%; border: 0; font-family: inherit; background: transparent; }
-.react-calendar__tile { position: relative; padding: .7em .3em; }
-.react-calendar__tile--active { background: #14213d !important; color: #fff; border-radius: 6px; }
-.react-calendar__tile--now { background: #ccfbf1; border-radius: 6px; }
-.react-calendar__tile.has-rec::after { content: ''; position: absolute; bottom: 4px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 9999px; background: #0f766e; }
+.mini-cal.react-calendar { width: 100%; max-width: 320px; border: 0; font-family: inherit; background: transparent; font-size: 0.8rem; }
+.mini-cal .react-calendar__navigation button { min-width: 32px; font-size: 0.85rem; }
+.mini-cal .react-calendar__tile { position: relative; padding: 0.5em 0.25em; }
+.mini-cal .react-calendar__tile--active { background: #14213d !important; color: #fff; border-radius: 6px; }
+.mini-cal .react-calendar__tile--now { background: #ccfbf1; border-radius: 6px; }
+.mini-cal .react-calendar__month-view__weekdays__weekday abbr { text-decoration: none; }
 
+/* Saturday column green, Sunday column red */
+.mini-cal .sat-col, .mini-cal .sat-col abbr { color: #0f766e; }
+.mini-cal .sun-col, .mini-cal .sun-col abbr { color: #c2410c; }
+.mini-cal .react-calendar__tile--active.sat-col,
+.mini-cal .react-calendar__tile--active.sun-col { color: #fff; }
+
+/* Green dot under any day that already has an entry */
+.mini-cal .has-rec::after { content: ''; position: absolute; bottom: 2px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 9999px; background: #0f766e; }
+.mini-cal .react-calendar__tile--active.has-rec::after { background: #5eead4; }
 @media print {
   body.printing-log * { visibility: hidden; }
   body.printing-log .log-area, body.printing-log .log-area * { visibility: visible; }

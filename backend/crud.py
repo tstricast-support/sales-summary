@@ -96,3 +96,16 @@ def audit(db, start, end, slug=None):
              "old_sales": f(a.old_sales), "new_sales": f(a.new_sales),
              "old_collection": f(a.old_collection), "new_collection": f(a.new_collection)}
             for a in q.order_by(A.timestamp.desc()).limit(500).all()]
+
+def add_damage(db, d: schemas.DamageIn):
+    rec = models.DamageRecord(record_date=d.record_date, printing_damage=d.printing_damage,
+                              accubind_damage=d.accubind_damage, binding_damage=d.binding_damage,
+                              submitted_by=d.submitted_by)
+    db.add(rec); db.commit(); db.refresh(rec)
+    return rec
+
+
+def list_damages(db, limit=300):
+    return (db.query(models.DamageRecord)
+            .order_by(models.DamageRecord.record_date.desc(), models.DamageRecord.id.desc())
+            .limit(limit).all())

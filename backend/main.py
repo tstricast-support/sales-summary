@@ -59,6 +59,15 @@ def save_record(data: schemas.RecordIn, db: Session = Depends(get_db)):
     except LookupError as e:
         raise HTTPException(404, str(e))
 
+@app.get("/api/damages", response_model=list[schemas.DamageOut])
+def damages(db: Session = Depends(get_db)):
+    return crud.list_damages(db)
+
+
+@app.post("/api/damages", response_model=schemas.DamageOut)
+def add_damage(data: schemas.DamageIn, db: Session = Depends(get_db)):
+    return crud.add_damage(db, data)
+
 @app.post("/api/records/bulk")
 def save_bulk(data: schemas.BulkIn, db: Session = Depends(get_db)):
     try:

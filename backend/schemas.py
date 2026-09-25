@@ -62,3 +62,36 @@ class BulkIn(BaseModel):
         if not NAME_RE.match(v):
             raise ValueError("Name must be 2-60 characters: letters, spaces, . ' -")
         return v
+
+class DamageIn(BaseModel):
+    record_date: date
+    printing_damage: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    accubind_damage: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    binding_damage: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    submitted_by: str
+
+    @field_validator("submitted_by")
+    @classmethod
+    def valid_name(cls, v: str):
+        v = " ".join(v.split())
+        if not NAME_RE.match(v):
+            raise ValueError("Name must be 2-60 characters: letters, spaces, . ' -")
+        return v
+
+    @field_validator("record_date")
+    @classmethod
+    def not_future(cls, v: date):
+        if v > date.today() + timedelta(days=1):
+            raise ValueError("Future dates are not allowed")
+        return v
+
+
+class DamageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    record_date: date
+    printing_damage: float
+    accubind_damage: float
+    binding_damage: float
+    submitted_by: str
+    created_at: datetime | None = None

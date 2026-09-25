@@ -41,3 +41,13 @@ class AuditLog(Base):
     new_collection = Column(Numeric(14, 2))
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     record = relationship("DailyRecord")
+
+class DamageRecord(Base):
+    __tablename__ = "damage_records"
+    id = Column(Integer, primary_key=True)
+    record_date = Column(Date, nullable=False, index=True)
+    printing_damage = Column(Numeric(14, 2), nullable=False, default=0)
+    accubind_damage = Column(Numeric(14, 2), nullable=False, default=0)
+    binding_damage = Column(Numeric(14, 2), nullable=False, default=0)
+    submitted_by = Column(String(60), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
