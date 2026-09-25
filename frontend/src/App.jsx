@@ -1017,24 +1017,26 @@ function Departments() {
       <p className={`mb-4 text-sm ${invalid ? 'text-red-700' : 'text-ink/60'}`}>
         {invalid ? 'From date must be on or before the To date.' : `${names[kind]} · ${range.start} → ${range.end}. Tap a department to see its details.`}
       </p>
-      <section className="card mt-4">
-
-        <div className="relative mt-3">
+            <div className="mb-4 flex w-full justify-end">
+        <div className="relative w-full sm:w-auto">
           <button onClick={() => setOpen(o => !o)} aria-expanded={open}
-            className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30">
-            <span className="flex-1 bg-emerald-50 px-4 py-3 text-left">
-              <span className="block text-xs uppercase text-ink/60">Total sales</span>
-              <span className="block text-2xl font-bold text-sale">{money(tot.sales)}</span>
+            className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30 sm:w-auto">
+            <span className="flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:flex-none">
+              <span className="block text-xs uppercase text-ink/60">Sales</span>
+              <span className="block text-lg font-bold text-sale">{money(tot.sales)}</span>
             </span>
-            <span className="flex-1 bg-orange-50 px-4 py-3 text-left">
-              <span className="block text-xs uppercase text-ink/60">Total collection</span>
-              <span className="block text-2xl font-bold text-coll">{money(tot.collection)}</span>
+            <span className="flex-1 bg-orange-50 px-4 py-2.5 text-left sm:flex-none">
+              <span className="block text-xs uppercase text-ink/60">Collection</span>
+              <span className="block text-lg font-bold text-coll">{money(tot.collection)}</span>
             </span>
           </button>
 
           {open && (
-            <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <div className="absolute left-0 right-0 z-20 mt-2 space-y-2 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:right-auto sm:w-72">
+              <p className="text-xs font-semibold uppercase text-ink/60">
+                {invalid ? 'From date must be on or before the To date.' : `${names[kind]} · ${range.start} → ${range.end}`}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
                 {Object.entries(names).map(([k, l]) => (
                   <button key={k} onClick={() => { setKind(k); if (k !== 'custom') setOpen(false) }}
                     className={`rounded-md border px-3 py-2 text-sm font-medium ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
@@ -1042,7 +1044,7 @@ function Departments() {
               </div>
               {kind === 'custom' && (
                 <>
-                  <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+                  <div className="grid grid-cols-2 gap-3">
                     <label className="block min-w-0 text-xs font-medium">From
                       <input type="date" className="input mt-1 min-w-0" value={from} max={to || todayStr} onChange={e => setFrom(e.target.value)} /></label>
                     <label className="block min-w-0 text-xs font-medium">To
@@ -1054,7 +1056,7 @@ function Departments() {
             </div>
           )}
         </div>
-      </section>
+      </div>
       <div className="space-y-3">
         {DEPTS.map(d => {
           const t = totals[d.slug] || { sales: 0, collection: 0 }
