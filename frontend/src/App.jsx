@@ -1112,9 +1112,9 @@ function AdminNav() {
   return (
     <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
-        <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>I PHO. DAM</NavLink>
+        <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>DAMAGES</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
         <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
         {!pushEnabled && (

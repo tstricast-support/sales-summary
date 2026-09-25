@@ -32,10 +32,10 @@ self.addEventListener('notificationclick', e => {
 // Network-first; fall back to cache when offline (app shell + department/record data)
 self.addEventListener('fetch', e => {
   const req = e.request, url = new URL(req.url)
-  if (req.method !== 'GET') return
+  if (req.method !== 'GET' || !url.protocol.startsWith('http')) return
   const skip = /\/api\/(export|audit|summary)/.test(url.pathname)
   e.respondWith(fetch(req).then(res => {
-    if (res.ok && !skip) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)) }
+    if (res.ok && !skip) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy).catch(() => {})) }
     return res
   }).catch(() => caches.match(req).then(m => m || (req.mode === 'navigate' ? caches.match('/') : Response.error()))))
 })
