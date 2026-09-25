@@ -1,6 +1,13 @@
-const CACHE = 'summary-v1'
+const CACHE = 'summary-v2'
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/', '/manifest.json', '/icon.svg'])))
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll([
+    '/', '/manifest.json', '/icon.svg',
+    '/department/dd-engineering', '/manifests/dd-engineering.json',
+    '/department/i-lab-photobook', '/manifests/i-lab-photobook.json',
+    '/department/i-lab-std', '/manifests/i-lab-std.json',
+    '/department/tricast', '/manifests/tricast.json',
+    '/department/i-photobook-damage', '/manifests/i-photobook-damage.json',
+  ])))
   self.skipWaiting()
 })
 self.addEventListener('activate', e => {
