@@ -68,13 +68,13 @@ function urlBase64ToUint8Array(base64String) {
 async function enablePushNotifications() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     alert('Push notifications are not supported on this browser/device.')
-    return
+    return false
   }
   const perm = await Notification.requestPermission()
-  if (perm !== 'granted') return
+  if (perm !== 'granted') return false
   const reg = await navigator.serviceWorker.ready
   const { key } = await (await call('/api/push/public-key')).json()
-  if (!key) return alert('Push notifications are not set up on the server yet.')
+  if (!key) { alert('Push notifications are not set up on the server yet.'); return false }
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(key),
@@ -84,7 +84,7 @@ async function enablePushNotifications() {
     method: 'POST',
     body: JSON.stringify({ endpoint: sub.endpoint, keys: j.keys }),
   })
-  alert('Notifications enabled on this device.')
+  return true
 }
 
 // Offline queue: entries saved while offline are re-sent when the connection returns
@@ -520,7 +520,7 @@ function DepartmentPage({ page }) {
   const { title, slugs } = PAGES[page]
   const [sp] = useSearchParams()
   const [tab, setTab] = useState(slugs.includes(sp.get('tab')) ? sp.get('tab') : slugs[0])
-  const fromAdmin = useLocation().state?.admin
+  const fromAdmin = useLocation().state?.admin || sp.get('admin') === '1'
   const entryRef = useRef(null)
   const [totalsSlot, setTotalsSlot] = useState(null)
 
@@ -1095,6 +1095,20 @@ const togglePie = catName => {
 
 function AdminNav() {
   const link = ({ isActive }) => `flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium sm:flex-none ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
+  const [pushEnabled, setPushEnabled] = useState(false)
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    navigator.serviceWorker.ready
+      .then(reg => reg.pushManager.getSubscription())
+      .then(sub => setPushEnabled(!!sub && Notification.permission === 'granted'))
+      .catch(() => {})
+  }, [])
+
+  const handleEnable = async () => {
+    if (await enablePushNotifications()) setPushEnabled(true)
+  }
+
   return (
     <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
@@ -1103,11 +1117,13 @@ function AdminNav() {
         <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>I PHO. DAM</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
         <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
-        <button type="button" onClick={enablePushNotifications}
-          className="ml-auto flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-white/10"
-          title="Get a phone notification whenever a department submits sales/collection">
-          <Bell size={18} />NOTIFY ME
-        </button>
+        {!pushEnabled && (
+          <button type="button" onClick={handleEnable}
+            className="ml-auto flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-white/10"
+            title="Get a phone notification whenever a department submits sales/collection">
+            <Bell size={18} />NOTIFY ME
+          </button>
+        )}
       </div>
     </nav>
   )

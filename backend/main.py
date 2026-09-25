@@ -12,6 +12,15 @@ from database import engine, Base, get_db, SessionLocal
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
+# mirrors the frontend's PAGES grouping in App.jsx, just for building notification links
+PAGE_FOR_SLUG = {
+    "dd-engineering": "dd-engineering",
+    "i-lab": "i-lab-photobook",
+    "i-photobook": "i-lab-photobook",
+    "i-lab-std": "i-lab-std",
+    "tricast": "tricast",
+}
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -58,11 +67,12 @@ def records(start: date, end: date, department: str | None = None, db: Session =
 def save_record(data: schemas.RecordIn, db: Session = Depends(get_db)):
     try:
         rec = crud.upsert_record(db, data)
+        page = PAGE_FOR_SLUG.get(rec.department.slug, rec.department.slug)
         notify.notify_admins(
             db,
             title=f"{rec.department.name} — daily update",
             body=f"Sales {rec.sales_amount} / Collection {rec.collection_amount} — {rec.submitted_by}",
-            url=f"/department/{rec.department.slug}",
+            url=f"/department/{page}?tab={rec.department.slug}&admin=1",
         )
         return rec
     except LookupError as e:
