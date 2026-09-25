@@ -93,3 +93,12 @@ class ProjectExpense(Base):
     @property
     def category_name(self):
         return self.supplier.category.name
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+    id = Column(Integer, primary_key=True)
+    endpoint = Column(String(500), unique=True, nullable=False)
+    p256dh = Column(String(200), nullable=False)
+    auth = Column(String(100), nullable=False)
+    label = Column(String(60))  # which admin/device, optional
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

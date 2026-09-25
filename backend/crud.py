@@ -300,3 +300,12 @@ def migrate_audit_logs(db):
     db.execute(text("ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_record_id_fkey "
                      "FOREIGN KEY (record_id) REFERENCES daily_records(id) ON DELETE SET NULL"))
     db.commit()
+
+def add_push_subscription(db, s: schemas.PushSubscriptionIn):
+    existing = db.query(models.PushSubscription).filter_by(endpoint=s.endpoint).first()
+    if existing:
+        existing.p256dh, existing.auth, existing.label = s.keys["p256dh"], s.keys["auth"], s.label
+    else:
+        db.add(models.PushSubscription(endpoint=s.endpoint, p256dh=s.keys["p256dh"],
+                                        auth=s.keys["auth"], label=s.label))
+    db.commit()

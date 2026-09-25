@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from sqlalchemy.orm import Session
-import crud, models, schemas
+import crud, models, schemas, notify
 from database import engine, Base, get_db, SessionLocal
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
@@ -57,10 +57,17 @@ def records(start: date, end: date, department: str | None = None, db: Session =
 @app.post("/api/records", response_model=schemas.RecordOut)
 def save_record(data: schemas.RecordIn, db: Session = Depends(get_db)):
     try:
-        return crud.upsert_record(db, data)
+        rec = crud.upsert_record(db, data)
+        notify.notify_admins(
+            db,
+            title=f"{rec.department.name} — daily update",
+            body=f"Sales {rec.sales_amount} / Collection {rec.collection_amount} — {rec.submitted_by}",
+            url=f"/department/{rec.department.slug}",
+        )
+        return rec
     except LookupError as e:
         raise HTTPException(404, str(e))
-
+    
 @app.get("/api/damages", response_model=list[schemas.DamageOut])
 def damages(db: Session = Depends(get_db)):
     return crud.list_damages(db)
@@ -102,6 +109,16 @@ def remove_record(record_id: int, db: Session = Depends(get_db)):
     check_edit_window(rec.created_at)
     crud.delete_record(db, record_id)
     return {"ok": True}
+
+@app.get("/api/push/public-key")
+def push_public_key():
+    return {"key": os.getenv("VAPID_PUBLIC_KEY", "")}
+
+
+@app.post("/api/push/subscribe", dependencies=[Depends(admin_only)])
+def push_subscribe(data: schemas.PushSubscriptionIn, db: Session = Depends(get_db)):
+    crud.add_push_subscription(db, data)
+    return {"status": "ok"}
 
 @app.put("/api/damages/{damage_id}", response_model=schemas.DamageOut)
 def edit_damage(damage_id: int, data: schemas.DamageIn, db: Session = Depends(get_db)):

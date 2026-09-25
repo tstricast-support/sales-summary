@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -56,6 +56,35 @@ async function call(path, opts = {}) {
     throw Object.assign(new Error(msg), { status: res.status })
   }
   return res
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)))
+}
+
+async function enablePushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    alert('Push notifications are not supported on this browser/device.')
+    return
+  }
+  const perm = await Notification.requestPermission()
+  if (perm !== 'granted') return
+  const reg = await navigator.serviceWorker.ready
+  const { key } = await (await call('/api/push/public-key')).json()
+  if (!key) return alert('Push notifications are not set up on the server yet.')
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(key),
+  })
+  const j = sub.toJSON()
+  await call('/api/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({ endpoint: sub.endpoint, keys: j.keys }),
+  })
+  alert('Notifications enabled on this device.')
 }
 
 // Offline queue: entries saved while offline are re-sent when the connection returns
@@ -1069,11 +1098,16 @@ function AdminNav() {
   return (
     <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
         <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>I PHO. DAM</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
         <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
+        <button type="button" onClick={enablePushNotifications}
+          className="ml-auto flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-white/10"
+          title="Get a phone notification whenever a department submits sales/collection">
+          <Bell size={18} />NOTIFY ME
+        </button>
       </div>
     </nav>
   )

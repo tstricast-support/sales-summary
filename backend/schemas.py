@@ -151,3 +151,8 @@ class ProjectOut(BaseModel):
     cost: float
     expense_date: date
     updated_at: datetime | None = None
+
+class PushSubscriptionIn(BaseModel):
+    endpoint: str
+    keys: dict  # {"p256dh": ..., "auth": ...}
+    label: str | None = None
