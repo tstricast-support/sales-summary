@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2 } from 'lucide-react'
+import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -26,6 +26,8 @@ const deptName = s => DEPTS.find(d => d.slug === s)?.name || s
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // dd/mm/yyyy — the date format used in Sri Lanka
+const PIE_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d']
+
 const shortMoney = n => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 const sriDate = isoStr => { const [y, m, d] = isoStr.split('-'); return `${d}/${m}/${y}` }
 const within24h = createdAt => createdAt && (Date.now() - new Date(createdAt).getTime()) < 86400000
@@ -694,8 +696,10 @@ function ProjectsPage() {
   const [newSupMode, setNewSupMode] = useState(false)
   const [newSupName, setNewSupName] = useState('')
   const [collapsed, setCollapsed] = useState({}) // category name -> collapsed?
+  const [search, setSearch] = useState('')
   const [printCat, setPrintCat] = useState(null)
   const [printSup, setPrintSup] = useState(null)
+  const [pieCat, setPieCat] = useState(null) // category name currently showing its pie chart
   const [msg, setMsg] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -781,7 +785,20 @@ function ProjectsPage() {
       sup.total += Number(r.cost)
       sup.entries.push(r)
     }
-    return [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    let list = [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    const q = search.trim().toLowerCase()
+    if (q) {
+      list = list
+        .map(([catName, cat]) => {
+          const catMatches = catName.toLowerCase().includes(q)
+          const supEntries = [...cat.suppliers.entries()]
+            .filter(([supName]) => catMatches || supName.toLowerCase().includes(q))
+          if (!supEntries.length) return null
+          return [catName, { ...cat, suppliers: new Map(supEntries) }]
+        })
+        .filter(Boolean)
+    }
+    return list
   })()
   const grandTotal = rows.reduce((t, r) => t + Number(r.cost), 0)
   const toggleCat = name => setCollapsed(c => ({ ...c, [name]: !c[name] }))
@@ -804,6 +821,11 @@ function ProjectsPage() {
   }, 150)
 }
 
+const togglePie = catName => {
+  setCollapsed(c => ({ ...c, [catName]: true })) // roll this category open
+  setPieCat(p => (p === catName ? null : catName))
+}
+
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -814,9 +836,16 @@ function ProjectsPage() {
 
       <section className="card">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-semibold uppercase">Expense Report — by Category</h2>
+          <h2 className="font-semibold uppercase">Expense Report - by Category</h2>
           <p className="text-sm font-semibold">Grand total: {money(grandTotal)}</p>
         </div>
+        <input
+            type="text"
+            className="input mb-3 w-full"
+            placeholder="Search category or supplier / worker…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         {!grouped.length && <p className="py-10 text-center text-ink/60">No entries yet. Tap + ADD PAYMENT to add one.</p>}
         <div className="space-y-3">
           {grouped.map(([catName, cat]) => (
@@ -824,17 +853,39 @@ function ProjectsPage() {
               <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                 <button type="button" onClick={() => toggleCat(catName)}
                   className="flex flex-1 items-center gap-2 text-left font-semibold uppercase">
-                  <ChevronRight size={18} className={`shrink-0 transition-transform ${!collapsed[catName] ? 'rotate-90' : ''}`} />
+                  <ChevronRight size={18} className={`shrink-0 transition-transform ${collapsed[catName] ? 'rotate-90' : ''}`} />
                   {catName}
                 </button>
                 <span className="text-sm font-semibold">{money(cat.total)}</span>
+                <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => togglePie(catName)}
+                aria-label={`Show ${catName} pie chart`} title="Show supplier breakdown as a pie chart">
+                <PieChart size={16} />
+              </button>
                 <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printCategory(catName)}
                   aria-label={`Print ${catName} report`} title="Print A4 report for this category">
                   <Printer size={16} />
                 </button>
               </div>
-              {!collapsed[catName] && (
+              {(search.trim() ? true : collapsed[catName]) && (
                 <div className="space-y-2 border-t border-ink/10 p-3">
+                  {pieCat === catName && (
+                    <div className="mb-3 h-64 w-full no-print">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RePieChart>
+                          <Pie
+                            data={[...cat.suppliers.entries()].map(([supName, sup]) => ({ name: supName, value: sup.total }))}
+                            dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label
+                          >
+                            {[...cat.suppliers.entries()].map((_, i) => (
+                              <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={v => money(v)} />
+                          <Legend />
+                        </RePieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
                   {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
                     <div key={supName} className="rounded-md bg-paper p-2.5">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
