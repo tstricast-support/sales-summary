@@ -37,6 +37,7 @@ class RecordOut(BaseModel):
     sales_amount: float
     collection_amount: float
     submitted_by: str
+    created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
@@ -95,3 +96,25 @@ class DamageOut(BaseModel):
     binding_damage: float
     submitted_by: str
     created_at: datetime | None = None
+
+class ProjectIn(BaseModel):
+    good_name: str
+    cost: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    expense_date: date = Field(default_factory=date.today)
+
+    @field_validator("good_name")
+    @classmethod
+    def valid_name(cls, v: str):
+        v = " ".join(v.split())
+        if not (1 <= len(v) <= 150):
+            raise ValueError("Item name must be 1-150 characters")
+        return v
+
+
+class ProjectOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    good_name: str
+    cost: float
+    expense_date: date
+    updated_at: datetime | None = None

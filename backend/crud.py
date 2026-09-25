@@ -109,3 +109,52 @@ def list_damages(db, limit=300):
     return (db.query(models.DamageRecord)
             .order_by(models.DamageRecord.record_date.desc(), models.DamageRecord.id.desc())
             .limit(limit).all())
+
+def update_damage(db, damage_id: int, d: schemas.DamageIn):
+    rec = db.query(models.DamageRecord).get(damage_id)
+    if not rec:
+        raise LookupError("Damage entry not found")
+    rec.record_date, rec.printing_damage = d.record_date, d.printing_damage
+    rec.accubind_damage, rec.binding_damage, rec.submitted_by = d.accubind_damage, d.binding_damage, d.submitted_by
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def delete_damage(db, damage_id: int):
+    rec = db.query(models.DamageRecord).get(damage_id)
+    if not rec:
+        raise LookupError("Damage entry not found")
+    db.delete(rec); db.commit()
+
+
+def delete_record(db, record_id: int):
+    rec = db.query(models.DailyRecord).get(record_id)
+    if not rec:
+        raise LookupError("Record not found")
+    db.delete(rec); db.commit()
+    
+
+def list_projects(db):
+    return db.query(models.ProjectExpense).order_by(models.ProjectExpense.expense_date.desc(), models.ProjectExpense.id.desc()).all()
+
+
+def add_project(db, p: schemas.ProjectIn):
+    rec = models.ProjectExpense(good_name=p.good_name, cost=p.cost, expense_date=p.expense_date)
+    db.add(rec); db.commit(); db.refresh(rec)
+    return rec
+
+
+def update_project(db, project_id: int, p: schemas.ProjectIn):
+    rec = db.query(models.ProjectExpense).get(project_id)
+    if not rec:
+        raise LookupError("Project entry not found")
+    rec.good_name, rec.cost, rec.expense_date = p.good_name, p.cost, p.expense_date
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def delete_project(db, project_id: int):
+    rec = db.query(models.ProjectExpense).get(project_id)
+    if not rec:
+        raise LookupError("Project entry not found")
+    db.delete(rec); db.commit()

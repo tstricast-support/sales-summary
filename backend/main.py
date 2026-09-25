@@ -1,6 +1,6 @@
 import io, os
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -67,6 +67,112 @@ def damages(db: Session = Depends(get_db)):
 @app.post("/api/damages", response_model=schemas.DamageOut)
 def add_damage(data: schemas.DamageIn, db: Session = Depends(get_db)):
     return crud.add_damage(db, data)
+
+def check_edit_window(created_at):
+    if created_at and (datetime.now(timezone.utc) - created_at.replace(tzinfo=timezone.utc)).total_seconds() > 86400:
+        raise HTTPException(403, "This entry is more than 24 hours old and can no longer be edited or deleted here.")
+
+
+@app.put("/api/damages/{damage_id}", response_model=schemas.DamageOut)
+def edit_damage(damage_id: int, data: schemas.DamageIn, db: Session = Depends(get_db)):
+    rec = db.query(models.DamageRecord).get(damage_id)
+    if not rec:
+        raise HTTPException(404, "Damage entry not found")
+    check_edit_window(rec.created_at)
+    return crud.update_damage(db, damage_id, data)
+
+
+@app.delete("/api/damages/{damage_id}")
+def remove_damage(damage_id: int, db: Session = Depends(get_db)):
+    rec = db.query(models.DamageRecord).get(damage_id)
+    if not rec:
+        raise HTTPException(404, "Damage entry not found")
+    check_edit_window(rec.created_at)
+    crud.delete_damage(db, damage_id)
+    return {"ok": True}
+
+
+@app.delete("/api/records/{record_id}")
+def remove_record(record_id: int, db: Session = Depends(get_db)):
+    rec = db.query(models.DailyRecord).get(record_id)
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    check_edit_window(rec.created_at)
+    crud.delete_record(db, record_id)
+    return {"ok": True}
+
+@app.put("/api/damages/{damage_id}", response_model=schemas.DamageOut)
+def edit_damage(damage_id: int, data: schemas.DamageIn, db: Session = Depends(get_db)):
+    rec = db.query(models.DamageRecord).get(damage_id)
+    if not rec:
+        raise HTTPException(404, "Damage entry not found")
+    check_edit_window(rec.created_at)
+    return crud.update_damage(db, damage_id, data)
+
+
+@app.delete("/api/damages/{damage_id}")
+def remove_damage(damage_id: int, db: Session = Depends(get_db)):
+    rec = db.query(models.DamageRecord).get(damage_id)
+    if not rec:
+        raise HTTPException(404, "Damage entry not found")
+    check_edit_window(rec.created_at)
+    crud.delete_damage(db, damage_id)
+    return {"ok": True}
+
+
+@app.delete("/api/records/{record_id}")
+def remove_record(record_id: int, db: Session = Depends(get_db)):
+    rec = db.query(models.DailyRecord).get(record_id)
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    check_edit_window(rec.created_at)
+    crud.delete_record(db, record_id)
+    return {"ok": True}
+
+
+# ── Admin-only: no 24-hour restriction ──
+@app.delete("/api/admin/records/{record_id}")
+def admin_remove_record(record_id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_record(db, record_id)
+        return {"ok": True}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.delete("/api/admin/damages/{damage_id}")
+def admin_remove_damage(damage_id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_damage(db, damage_id)
+        return {"ok": True}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+@app.get("/api/projects", response_model=list[schemas.ProjectOut])
+def projects(db: Session = Depends(get_db)):
+    return crud.list_projects(db)
+
+
+@app.post("/api/projects", response_model=schemas.ProjectOut)
+def add_project(data: schemas.ProjectIn, db: Session = Depends(get_db)):
+    return crud.add_project(db, data)
+
+
+@app.put("/api/projects/{project_id}", response_model=schemas.ProjectOut)
+def edit_project(project_id: int, data: schemas.ProjectIn, db: Session = Depends(get_db)):
+    try:
+        return crud.update_project(db, project_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.delete("/api/projects/{project_id}")
+def remove_project(project_id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_project(db, project_id)
+        return {"ok": True}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
 
 @app.post("/api/records/bulk")
 def save_bulk(data: schemas.BulkIn, db: Session = Depends(get_db)):

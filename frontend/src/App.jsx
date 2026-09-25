@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState,useRef } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, AlertTriangle } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2 } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -26,6 +26,7 @@ const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // dd/mm/yyyy — the date format used in Sri Lanka
 const sriDate = isoStr => { const [y, m, d] = isoStr.split('-'); return `${d}/${m}/${y}` }
+const within24h = createdAt => createdAt && (Date.now() - new Date(createdAt).getTime()) < 86400000
 const store = {
   get: (k, f) => { try { return JSON.parse(localStorage.getItem(k)) ?? f } catch { return f } },
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch { /* storage full/blocked */ } },
@@ -92,6 +93,7 @@ function Notice({ m }) {
 
 /* ───────────── department panel: calendar + form + history chart ───────────── */
 function DeptPanel({ slug, defaultName = '' }) {
+  const isAdmin = defaultName === 'Admin'
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState('day')
@@ -109,6 +111,7 @@ function DeptPanel({ slug, defaultName = '' }) {
   const [msg, setMsg] = useState(null)
   const [toast, setToast] = useState(null)
   const [busy, setBusy] = useState(false)
+
 
   const refresh = useCallback(async () => {
     try {
@@ -135,6 +138,14 @@ function DeptPanel({ slug, defaultName = '' }) {
   }, [open])
 
   const openEntry = d => { setMode('day'); setDate(d || todayStr); setMsg(null); setOpen(true) }
+
+  const removeEntry = async r => {
+  if (!window.confirm(`Delete the entry for ${r.record_date}?`)) return
+  try {
+    await call(isAdmin ? `/api/admin/records/${r.id}` : `/api/records/${r.id}`, { method: 'DELETE' })
+    await refresh()
+  } catch (e) { setToast({ t: 'err', m: e.status ? e.message : 'Could not delete. Check your connection.' }) }
+}
 
   const submit = async e => {
     e.preventDefault(); setMsg(null)
@@ -261,14 +272,17 @@ useEffect(() => {
         <div className="max-h-96 overflow-auto">
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
-              <th className="py-2">Date</th><th className="text-right">Sales</th><th className="text-right">Collection</th><th className="pl-4">By</th></tr></thead>
+                <th className="py-2">Date</th><th className="text-right">Sales</th><th className="text-right">Collection</th><th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.record_date} onClick={() => openEntry(r.record_date)} className="cursor-pointer border-b border-ink/5 hover:bg-ink/5">
-                  <td className="py-2 whitespace-nowrap">{r.record_date}</td>
+                <tr key={r.record_date} className="border-b border-ink/5 hover:bg-ink/5">
+                  <td className="cursor-pointer py-2 whitespace-nowrap" onClick={() => openEntry(r.record_date)}>{r.record_date}</td>
                   <td className="text-right">{money(r.sales_amount)}</td>
                   <td className="text-right">{money(r.collection_amount)}</td>
                   <td className="pl-4">{r.submitted_by}</td>
+                  <td className="pl-2 text-right">
+                    {(isAdmin || within24h(r.created_at)) && r.id && <RowMenu onDelete={() => removeEntry(r)} />}
+                  </td>
                 </tr>
               ))}
               {!rows.length && <tr><td colSpan={4} className="py-6 text-center text-ink/60">No entries in {entMonth}.</td></tr>}
@@ -409,10 +423,35 @@ function DepartmentPage({ page }) {
   )
 }
 
+function RowMenu({ onEdit, onDelete }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [open])
+  return (
+    <span ref={ref} className="relative inline-block">
+      <button className="rounded p-1.5 text-ink/50 hover:bg-ink/10 hover:text-ink" onClick={() => setOpen(o => !o)} aria-label="More actions" aria-haspopup="true" aria-expanded={open}>
+        <MoreVertical size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-md border border-ink/10 bg-white shadow-lg">
+          {onEdit && <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-ink/5" onClick={() => { setOpen(false); onEdit() }}><Pencil size={14} />Edit</button>}
+          <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50" onClick={() => { setOpen(false); onDelete() }}><Trash2 size={14} />Delete</button>
+        </div>
+      )}
+    </span>
+  )
+}
+
 function DamagePage() {
   const fromAdmin = useLocation().state?.admin
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
   const [date, setDate] = useState(todayStr)
   const [rows, setRows] = useState(() => store.get('damages', []))
   const [f, setF] = useState({ printing: '', accubind: '', binding: '', by: localStorage.getItem('by') || '' })
@@ -428,6 +467,19 @@ function DamagePage() {
   }, [])
   useEffect(() => { refresh() }, [refresh])
 
+  const openEdit = r => {
+  setEditing(r); setDate(r.record_date)
+  setF({ printing: String(r.printing_damage), accubind: String(r.accubind_damage), binding: String(r.binding_damage), by: r.submitted_by })
+  setMsg(null); setOpen(true)
+}
+const removeDamage = async r => {
+  if (!window.confirm(`Delete the damage entry for ${sriDate(r.record_date)}?`)) return
+  try {
+    await call(fromAdmin ? `/api/admin/damages/${r.id}` : `/api/damages/${r.id}`, { method: 'DELETE' })
+    await refresh()
+  } catch (e) { setToast({ t: 'err', m: e.status ? e.message : 'Could not delete. Check your connection.' }) }
+}
+
   const submit = async e => {
     e.preventDefault(); setMsg(null)
     const by = f.by.trim().replace(/\s+/g, ' ')
@@ -439,10 +491,11 @@ function DamagePage() {
     const body = { record_date: date, printing_damage: p, accubind_damage: a, binding_damage: b, submitted_by: by }
     setBusy(true)
     try {
-      await call('/api/damages', { method: 'POST', body: JSON.stringify(body) })
-      setToast({ t: 'ok', m: `Damage entry saved for ${sriDate(date)}.` })
-      setOpen(false); setF({ printing: '', accubind: '', binding: '', by })
-      await refresh()
+        if (editing) await call(`/api/damages/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
+        else await call('/api/damages', { method: 'POST', body: JSON.stringify(body) })
+        setToast({ t: 'ok', m: `Damage entry saved for ${sriDate(date)}.` })
+        setOpen(false); setEditing(null); setF({ printing: '', accubind: '', binding: '', by })
+        await refresh()
     } catch (err) {
       if (err.status) setMsg({ t: 'err', m: err.message })
       else {
@@ -460,8 +513,10 @@ function DamagePage() {
         <Link to="/admin/departments" className="btn-ghost w-fit"><ArrowLeft size={16} />Back to home</Link>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold uppercase"><AlertTriangle size={24} />I Photobook — Damage Log</h1>
-        {!fromAdmin && <button className="btn" onClick={() => { setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>}
+        <h1 className="flex items-center gap-2 text-2xl font-bold uppercase">
+          <Logo slug="i-photobook" className="h-8 w-8" />I Photobook — Damage Log
+        </h1>
+        {!fromAdmin && <button className="btn" onClick={() => { setEditing(null); setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>}
       </div>
       <Notice m={toast} />
 
@@ -470,15 +525,18 @@ function DamagePage() {
         <div className="max-h-[70vh] overflow-auto">
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
-              <th className="py-2">Date</th><th className="text-right">Printing</th><th className="text-right">Accubind</th><th className="text-right">Binding</th><th className="pl-4">By</th></tr></thead>
+                <th className="py-2">Date</th><th className="text-right">Printing</th><th className="text-right">Accubind</th><th className="text-right">Binding</th><th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.id} className="border-b border-ink/5">
+                <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
                   <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
                   <td className="text-right">{money(r.printing_damage)}</td>
                   <td className="text-right">{money(r.accubind_damage)}</td>
                   <td className="text-right">{money(r.binding_damage)}</td>
                   <td className="pl-4">{r.submitted_by}</td>
+                  <td className="pl-2 text-right">
+                    {(fromAdmin || within24h(r.created_at)) && <RowMenu onEdit={() => openEdit(r)} onDelete={() => removeDamage(r)} />}
+                  </td>
                 </tr>
               ))}
               {!rows.length && <tr><td colSpan={5} className="py-6 text-center text-ink/60">No damage entries yet.</td></tr>}
@@ -516,6 +574,111 @@ function DamagePage() {
     </main>
   )
 }
+function ProjectsPage() {
+  const todayStr = iso(new Date())
+  const empty = { good_name: '', cost: '', expense_date: todayStr }
+  const [rows, setRows] = useState([])
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(null) // null = new, else the row being edited
+  const [f, setF] = useState(empty)
+  const [msg, setMsg] = useState(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setErr('')
+    try { setRows(await (await call('/api/projects')).json()) }
+    catch (e) { setErr(e.status ? e.message : 'Cannot reach the server. Check your connection.') }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const openNew = () => { setEditing(null); setF(empty); setMsg(null); setOpen(true) }
+  const openEdit = r => { setEditing(r); setF({ good_name: r.good_name, cost: String(r.cost), expense_date: r.expense_date }); setMsg(null); setOpen(true) }
+
+  const submit = async e => {
+    e.preventDefault(); setMsg(null)
+    const name = f.good_name.trim()
+    if (!name) return setMsg({ t: 'err', m: 'Enter the item or good name.' })
+    const cost = parseFloat(f.cost)
+    if (!(cost >= 0)) return setMsg({ t: 'err', m: 'Cost must be a number of 0 or more.' })
+    const expense_date = f.expense_date || todayStr // blank date auto-fills to today
+    setBusy(true)
+    try {
+      if (editing) await call(`/api/projects/${editing.id}`, { method: 'PUT', body: JSON.stringify({ good_name: name, cost, expense_date }) })
+      else await call('/api/projects', { method: 'POST', body: JSON.stringify({ good_name: name, cost, expense_date }) })
+      setOpen(false); await load()
+    } catch (e) { setMsg({ t: 'err', m: e.status ? e.message : 'Cannot reach the server. Check your connection.' }) }
+    setBusy(false)
+  }
+
+  const remove = async r => {
+    if (!window.confirm(`Delete "${r.good_name}"?`)) return
+    try { await call(`/api/projects/${r.id}`, { method: 'DELETE' }); await load() }
+    catch (e) { setErr(e.status ? e.message : 'Could not delete. Check your connection.') }
+  }
+
+  const total = rows.reduce((t, r) => t + Number(r.cost), 0)
+
+  return (
+    <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="flex items-center gap-2 text-2xl font-bold uppercase"><Briefcase size={24} />Project Expenses</h1>
+        <button className="btn" onClick={openNew}>+ CREATE PROJECT</button>
+      </div>
+      <Notice m={err && { t: 'err', m: err }} />
+
+      <section className="card">
+        <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold uppercase">History</h2>
+          <p className="text-sm font-semibold">Total: {money(total)}</p></div>
+        <div className="max-h-[70vh] overflow-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
+              <th className="py-2">Date</th><th>Item</th><th className="text-right">Cost</th><th className="pl-4 no-print" /></tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
+                  <td className="py-2 whitespace-nowrap">{sriDate(r.expense_date)}</td>
+                  <td>{r.good_name}</td>
+                  <td className="text-right">{money(r.cost)}</td>
+                  <td className="pl-4 text-right">
+                    <RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} />
+                  </td>
+                </tr>
+              ))}
+              {!rows.length && <tr><td colSpan={4} className="py-6 text-center text-ink/60">No entries yet. Tap + CREATE PROJECT to add one.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
+          <form role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
+            className="w-full max-w-md space-y-3 rounded-t-xl bg-white p-4 sm:rounded-xl">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold uppercase">{editing ? 'Edit entry' : 'New project expense'}</h2>
+              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
+            </div>
+            <label className="block text-sm font-medium">Good / item name
+              <input className="input mt-1" value={f.good_name} maxLength={150} placeholder="ADD YOUR ITEM NAME"
+                onChange={e => setF({ ...f, good_name: e.target.value })} required /></label>
+            <label className="block text-sm font-medium">Cost
+              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.cost}
+                onChange={e => setF({ ...f, cost: e.target.value })} required /></label>
+            <label className="block text-sm font-medium">Date <span className="font-normal text-ink/60">(leave as today, or pick a past date)</span>
+              <input className="input mt-1" type="date" max={todayStr} value={f.expense_date}
+                onChange={e => setF({ ...f, expense_date: e.target.value })} /></label>
+            <Notice m={msg} />
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
+              <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </main>
+  )
+}
 
 function AdminShell() {
   const link = ({ isActive }) => `flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium sm:flex-none ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
@@ -526,7 +689,8 @@ function AdminShell() {
         <div className="flex gap-2">
           <NavLink to="/admin/departments" className={link}><Building2 size={18} />Departments</NavLink>
           <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
-          <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}><AlertTriangle size={18} />I PHO. DAM</NavLink>
+          <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>I PHO. DAM</NavLink>
+          <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
         </div>
       </nav>
       <Outlet />
@@ -832,6 +996,7 @@ useEffect(() => {
           <Route index element={<Navigate to="departments" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="departments" element={<Departments />} />
+          <Route path="projects" element={<ProjectsPage />} />
         </Route>
         {Object.keys(PAGES).map(p => <Route key={p} path={`/department/${p}`} element={<DepartmentPage page={p} />} />)}
         <Route path="/department/i-photobook-damage" element={<DamagePage />} />
