@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState,useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
 import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2 } from 'lucide-react'
@@ -92,7 +93,7 @@ function Notice({ m }) {
   return <p role="alert" className={`flex items-start gap-2 rounded-md p-3 text-sm ${cls}`}><Icon size={18} className="mt-0.5 shrink-0" />{m.m}</p>
 }
 
-function DeptPanel({ slug, defaultName = '', entryRef }) {
+function DeptPanel({ slug, defaultName = '', entryRef, totalsSlot }) {
   const isAdmin = defaultName === 'Admin'
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
@@ -253,8 +254,9 @@ useEffect(() => {
   // the date span currently driving BOTH the graph and Recent Entries below it
   const graphRange = (() => {
     if (range === 'custom') return { start: customFrom, end: customTo }
-    if (range === 'yearly') { const s = new Date(); s.setDate(s.getDate() - 364); return { start: iso(s), end: todayStr } }
-    const s = new Date(); s.setDate(s.getDate() - (range === 'weekly' ? 6 : 29))
+    if (range === 'weekly') { const s = new Date(); s.setDate(s.getDate() - ((s.getDay() + 6) % 7)); return { start: iso(s), end: todayStr } } // Monday of THIS week -> today
+    if (range === 'monthly') { const s = new Date(); s.setDate(1); return { start: iso(s), end: todayStr } } // 1st of THIS month -> today
+    const s = new Date(); s.setMonth(0, 1) // Jan 1 of THIS year -> today
     return { start: iso(s), end: todayStr }
   })()
 
@@ -279,50 +281,52 @@ useEffect(() => {
     return inRange.sort((a, b) => a.record_date.localeCompare(b.record_date))
       .map(r => ({ date: r.record_date.slice(5), Sales: Number(r.sales_amount), Collection: Number(r.collection_amount) }))
   })()
-  const rangeLabel = { weekly: 'LAST 7 DAYS', monthly: 'LAST 30 DAYS', yearly: 'LAST 12 MONTHS', custom: `${graphRange.start} → ${graphRange.end}` }[range]
-
+  const rangeLabel = { weekly: 'THIS WEEK', monthly: 'THIS MONTH', yearly: 'THIS YEAR', custom: `${graphRange.start} → ${graphRange.end}` }[range]
   // Recent Entries follows the same filter as the graph above (weekly/monthly/yearly/custom) — no separate month picker
   const rows = sourceHist.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
-    .sort((a, b) => b.record_date.localeCompare(a.record_date))
+    .sort((a, b) => a.record_date.localeCompare(b.record_date))
   const seg = on => `rounded-md border px-3 py-1.5 text-sm font-medium ${on ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`
+    const totalsBox = (
+    <div ref={tRef} className="relative w-full sm:w-auto">
+      <button onClick={() => setTOpen(o => !o)} aria-expanded={tOpen}
+        className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30 sm:w-auto">
+        <span className="flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:flex-none">
+          <span className="block text-xs uppercase text-ink/60">Sales</span>
+          <span className="block text-lg font-bold text-sale">{money(tot.sales)}</span>
+        </span>
+        <span className="flex-1 bg-orange-50 px-4 py-2.5 text-left sm:flex-none">
+          <span className="block text-xs uppercase text-ink/60">Collection</span>
+          <span className="block text-lg font-bold text-coll">{money(tot.collection)}</span>
+        </span>
+      </button>
+      {tOpen && (
+        <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:right-auto sm:w-72">
+          <p className="text-xs font-semibold uppercase text-ink/60">{totalRange.label}</p>
+          <div className="grid grid-cols-2 gap-2">
+            {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']].map(([k, l]) => (
+              <button key={k} onClick={() => setTMode(k)} className={seg(tMode === k)}>{l}</button>
+            ))}
+          </div>
+          {(tMode === 'date' || tMode === 'week') && (
+            <input type="date" className="input" max={todayStr} value={tDate} onChange={e => e.target.value && setTDate(e.target.value)} />
+          )}
+          {tMode === 'month' && (
+            <input type="month" className="input" max={todayStr.slice(0, 7)} value={tMonth} onChange={e => e.target.value && setTMonth(e.target.value)} />
+          )}
+          {tMode === 'year' && (
+            <input type="number" className="input" min="2000" max={new Date().getFullYear()} value={tYear} onChange={e => setTYear(e.target.value)} />
+          )}
+          <p className="text-xs text-ink/60">{tot.days} day{tot.days === 1 ? '' : 's'} with entries.</p>
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-  <div ref={tRef} className="relative w-full sm:w-auto">
-    <button onClick={() => setTOpen(o => !o)} aria-expanded={tOpen}
-      className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30 sm:w-auto">
-      <span className="flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:flex-none">
-        <span className="block text-xs uppercase text-ink/60">Sales</span>
-        <span className="block text-lg font-bold text-sale">{money(tot.sales)}</span>
-      </span>
-      <span className="flex-1 bg-orange-50 px-4 py-2.5 text-left sm:flex-none">
-        <span className="block text-xs uppercase text-ink/60">Collection</span>
-        <span className="block text-lg font-bold text-coll">{money(tot.collection)}</span>
-      </span>
-    </button>
-    {tOpen && (
-      <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:right-auto sm:w-72">
-        <p className="text-xs font-semibold uppercase text-ink/60">{totalRange.label}</p>
-        <div className="grid grid-cols-2 gap-2">
-          {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']].map(([k, l]) => (
-            <button key={k} onClick={() => setTMode(k)} className={seg(tMode === k)}>{l}</button>
-          ))}
-        </div>
-        {(tMode === 'date' || tMode === 'week') && (
-          <input type="date" className="input" max={todayStr} value={tDate} onChange={e => e.target.value && setTDate(e.target.value)} />
-        )}
-        {tMode === 'month' && (
-          <input type="month" className="input" max={todayStr.slice(0, 7)} value={tMonth} onChange={e => e.target.value && setTMonth(e.target.value)} />
-        )}
-        {tMode === 'year' && (
-          <input type="number" className="input" min="2000" max={new Date().getFullYear()} value={tYear} onChange={e => setTYear(e.target.value)} />
-        )}
-        <p className="text-xs text-ink/60">{tot.days} day{tot.days === 1 ? '' : 's'} with entries.</p>
-      </div>
-    )}
-  </div>
-</div>
-
+      {totalsSlot ? createPortal(totalsBox, totalsSlot) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">{totalsBox}</div>
+      )}
 
       <Notice m={toast} />
 
@@ -487,6 +491,7 @@ function DepartmentPage({ page }) {
   const [tab, setTab] = useState(slugs.includes(sp.get('tab')) ? sp.get('tab') : slugs[0])
   const fromAdmin = useLocation().state?.admin
   const entryRef = useRef(null)
+  const [totalsSlot, setTotalsSlot] = useState(null)
 
   useEffect(() => {
   const link = document.querySelector('link[rel="manifest"]')
@@ -509,6 +514,7 @@ function DepartmentPage({ page }) {
         </div>
         <button className="btn" onClick={() => entryRef.current?.()}>+ ENTRY</button>
       </header>
+      <div ref={setTotalsSlot} className="flex w-full justify-end" />
       {slugs.length > 1 && (
         <div role="tablist" className="flex gap-2">
           {slugs.map(s => (
@@ -518,7 +524,7 @@ function DepartmentPage({ page }) {
           ))}
         </div>
       )}
-      <DeptPanel key={tab} slug={tab} entryRef={entryRef} />
+      <DeptPanel key={tab} slug={tab} entryRef={entryRef} totalsSlot={totalsSlot} />
     </main>
   )
 }
@@ -976,113 +982,79 @@ function AdminShell() {
   )
 }
 
-function TotalsCard() {
+function Departments() {
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState('monthly')
   const [from, setFrom] = useState(todayStr.slice(0, 8) + '01')
   const [to, setTo] = useState(todayStr)
+  const [totals, setTotals] = useState({})
   const [tot, setTot] = useState({ sales: 0, collection: 0 })
 
   const range = kind === 'today' ? { start: todayStr, end: todayStr }
     : kind === 'custom' ? { start: from, end: to } : rangeFor(kind)
   const invalid = kind === 'custom' && (!from || !to || from > to)
 
+  // one fetch drives BOTH the per-department cards and the total box below
   useEffect(() => {
     if (invalid) return
     let live = true
     call(`/api/summary?start=${range.start}&end=${range.end}`).then(r => r.json())
-      .then(s => live && setTot(s.totals)).catch(() => {})
+      .then(s => {
+        if (!live) return
+        setTotals(Object.fromEntries(s.departments.map(d => [d.slug, d])))
+        setTot(s.totals)
+      })
+      .catch(() => {})
     return () => { live = false }
   }, [range.start, range.end, invalid])
 
   const names = { today: 'Today', weekly: 'Last 7 days', monthly: 'This month', yearly: 'This year', custom: 'Custom' }
 
   return (
-    <section className="card mt-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="font-semibold uppercase">Total – All Departments</h2>
-          <p className={`text-xs ${invalid ? 'text-red-700' : 'text-ink/60'}`}>
-            {invalid ? 'From date must be on or before the To date.' : `${names[kind]} · ${range.start} → ${range.end}`}
-          </p>
-        </div>
-        <button className="btn-ghost" onClick={() => setOpen(o => !o)} aria-expanded={open}>DATE FILTER</button>
-      </div>
-
-      {open && (
-        <div className="mt-3 space-y-3 rounded-md border border-ink/10 bg-paper p-3">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {Object.entries(names).map(([k, l]) => (
-              <button key={k} onClick={() => { setKind(k); if (k !== 'custom') setOpen(false) }}
-                className={`rounded-md border px-3 py-2 text-sm font-medium ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
-            ))}
-          </div>
-          {kind === 'custom' && (
-            <>
-              <div className="grid grid-cols-2 gap-3 sm:max-w-md">
-                <label className="block min-w-0 text-xs font-medium">From
-                  <input type="date" className="input mt-1 min-w-0" value={from} max={to || todayStr} onChange={e => setFrom(e.target.value)} /></label>
-                <label className="block min-w-0 text-xs font-medium">To
-                  <input type="date" className="input mt-1 min-w-0" value={to} min={from} max={todayStr} onChange={e => setTo(e.target.value)} /></label>
-              </div>
-              <button className="btn w-full sm:w-auto" onClick={() => setOpen(false)}>Done</button>
-            </>
-          )}
-        </div>
-      )}
-
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-md bg-emerald-50 p-3"><p className="text-xs uppercase text-ink/70">Total sales</p><p className="text-2xl font-bold text-sale">{money(tot.sales)}</p></div>
-        <div className="rounded-md bg-orange-50 p-3"><p className="text-xs uppercase text-ink/70">Total collection</p><p className="text-2xl font-bold text-coll">{money(tot.collection)}</p></div>
-      </div>
-    </section>
-  )
-}
-
-function Departments() {
-  const todayStr = iso(new Date())
-  const [kind, setKind] = useState('today')
-  const [from, setFrom] = useState(todayStr.slice(0, 8) + '01') // 1st of this month
-  const [to, setTo] = useState(todayStr)
-  const [totals, setTotals] = useState({})
-
-  const range = kind === 'today' ? { start: todayStr, end: todayStr } : { start: from, end: to }
-  const invalid = kind === 'custom' && (!from || !to || from > to)
-
-  useEffect(() => {
-    if (invalid) return
-    let live = true
-    call(`/api/summary?start=${range.start}&end=${range.end}`).then(r => r.json())
-      .then(s => live && setTotals(Object.fromEntries(s.departments.map(d => [d.slug, d]))))
-      .catch(() => {})
-    return () => { live = false }
-  }, [range.start, range.end, invalid])
-
-  return (
     <main className="mx-auto max-w-6xl p-4">
       <h1 className="mb-3 text-2xl font-bold">DEPARTMENTS</h1>
-      <div className="mb-3 space-y-3">
-      <div className="flex gap-2">
-        {[['today', 'TODAY'], ['custom', 'CUSTOM']].map(([k, l]) => (
-          <button key={k} onClick={() => setKind(k)}
-            className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium sm:flex-none ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
-        ))}
-      </div>
-      {kind === 'custom' && (
-        <div className="grid grid-cols-2 gap-3 sm:max-w-md">
-          <label className="block min-w-0 text-xs font-medium">From
-            <input type="date" className="input mt-1 min-w-0" value={from} max={to || todayStr} onChange={e => setFrom(e.target.value)} /></label>
-          <label className="block min-w-0 text-xs font-medium">To
-            <input type="date" className="input mt-1 min-w-0" value={to} min={from} max={todayStr} onChange={e => setTo(e.target.value)} /></label>
-        </div>
-      )}
-    </div>
       <p className={`mb-4 text-sm ${invalid ? 'text-red-700' : 'text-ink/60'}`}>
-        {invalid ? 'Choose a From date that is on or before the To date.'
-          : kind === 'today' ? "Today's totals. Tap a department to see its details."
-          : `Totals from ${from} to ${to}. Tap a department to see its details.`}
+        {invalid ? 'From date must be on or before the To date.' : `${names[kind]} · ${range.start} → ${range.end}. Tap a department to see its details.`}
       </p>
+      <section className="card mt-4">
+
+        <div className="relative mt-3">
+          <button onClick={() => setOpen(o => !o)} aria-expanded={open}
+            className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30">
+            <span className="flex-1 bg-emerald-50 px-4 py-3 text-left">
+              <span className="block text-xs uppercase text-ink/60">Total sales</span>
+              <span className="block text-2xl font-bold text-sale">{money(tot.sales)}</span>
+            </span>
+            <span className="flex-1 bg-orange-50 px-4 py-3 text-left">
+              <span className="block text-xs uppercase text-ink/60">Total collection</span>
+              <span className="block text-2xl font-bold text-coll">{money(tot.collection)}</span>
+            </span>
+          </button>
+
+          {open && (
+            <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                {Object.entries(names).map(([k, l]) => (
+                  <button key={k} onClick={() => { setKind(k); if (k !== 'custom') setOpen(false) }}
+                    className={`rounded-md border px-3 py-2 text-sm font-medium ${kind === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`}>{l}</button>
+                ))}
+              </div>
+              {kind === 'custom' && (
+                <>
+                  <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+                    <label className="block min-w-0 text-xs font-medium">From
+                      <input type="date" className="input mt-1 min-w-0" value={from} max={to || todayStr} onChange={e => setFrom(e.target.value)} /></label>
+                    <label className="block min-w-0 text-xs font-medium">To
+                      <input type="date" className="input mt-1 min-w-0" value={to} min={from} max={todayStr} onChange={e => setTo(e.target.value)} /></label>
+                  </div>
+                  <button className="btn w-full sm:w-auto" onClick={() => setOpen(false)}>Done</button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
       <div className="space-y-3">
         {DEPTS.map(d => {
           const t = totals[d.slug] || { sales: 0, collection: 0 }
@@ -1093,7 +1065,7 @@ function Departments() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-semibold">{d.name}</span>
-                <span className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm">
+                <span className="mt-1 grid grid-cols-[140px_1fr] gap-y-0.5 text-sm">
                   <span className="text-sale">Sales {money(t.sales)}</span>
                   <span className="text-coll">Collection {money(t.collection)}</span>
                 </span>
@@ -1103,7 +1075,7 @@ function Departments() {
           )
         })}
       </div>
-      <TotalsCard />
+
     </main>
   )
 }
