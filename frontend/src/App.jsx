@@ -468,17 +468,17 @@ function DamagePage() {
   useEffect(() => { refresh() }, [refresh])
 
   const openEdit = r => {
-  setEditing(r); setDate(r.record_date)
-  setF({ printing: String(r.printing_damage), accubind: String(r.accubind_damage), binding: String(r.binding_damage), by: r.submitted_by })
-  setMsg(null); setOpen(true)
-}
-const removeDamage = async r => {
-  if (!window.confirm(`Delete the damage entry for ${sriDate(r.record_date)}?`)) return
-  try {
-    await call(fromAdmin ? `/api/admin/damages/${r.id}` : `/api/damages/${r.id}`, { method: 'DELETE' })
-    await refresh()
-  } catch (e) { setToast({ t: 'err', m: e.status ? e.message : 'Could not delete. Check your connection.' }) }
-}
+    setEditing(r); setDate(r.record_date)
+    setF({ printing: String(r.printing_damage), accubind: String(r.accubind_damage), binding: String(r.binding_damage), by: r.submitted_by })
+    setMsg(null); setOpen(true)
+  }
+  const removeDamage = async r => {
+    if (!window.confirm(`Delete the damage entry for ${sriDate(r.record_date)}?`)) return
+    try {
+      await call(fromAdmin ? `/api/admin/damages/${r.id}` : `/api/damages/${r.id}`, { method: 'DELETE' })
+      await refresh()
+    } catch (e) { setToast({ t: 'err', m: e.status ? e.message : 'Could not delete. Check your connection.' }) }
+  }
 
   const submit = async e => {
     e.preventDefault(); setMsg(null)
@@ -491,11 +491,11 @@ const removeDamage = async r => {
     const body = { record_date: date, printing_damage: p, accubind_damage: a, binding_damage: b, submitted_by: by }
     setBusy(true)
     try {
-        if (editing) await call(`/api/damages/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
-        else await call('/api/damages', { method: 'POST', body: JSON.stringify(body) })
-        setToast({ t: 'ok', m: `Damage entry saved for ${sriDate(date)}.` })
-        setOpen(false); setEditing(null); setF({ printing: '', accubind: '', binding: '', by })
-        await refresh()
+      if (editing) await call(`/api/damages/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
+      else await call('/api/damages', { method: 'POST', body: JSON.stringify(body) })
+      setToast({ t: 'ok', m: `Damage entry saved for ${sriDate(date)}.` })
+      setOpen(false); setEditing(null); setF({ printing: '', accubind: '', binding: '', by })
+      await refresh()
     } catch (err) {
       if (err.status) setMsg({ t: 'err', m: err.message })
       else {
@@ -508,70 +508,70 @@ const removeDamage = async r => {
   }
 
   return (
-    <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
-      {fromAdmin && (
-        <Link to="/admin/departments" className="btn-ghost w-fit"><ArrowLeft size={16} />Back to home</Link>
-      )}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold uppercase">
-          <Logo slug="i-photobook" className="h-8 w-8" />I Photobook — Damage Log
-        </h1>
-        {!fromAdmin && <button className="btn" onClick={() => { setEditing(null); setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>}
-      </div>
-      <Notice m={toast} />
+    <>
+      {fromAdmin && <AdminNav />}
+      <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="flex items-center gap-2 text-2xl font-bold uppercase">
+            <Logo slug="i-photobook" className="h-8 w-8" />I Photobook — Damage Log
+          </h1>
+          <button className="btn" onClick={() => { setEditing(null); setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>
+        </div>
+        <Notice m={toast} />
 
-      <section className="card">
-        <h2 className="mb-2 font-semibold uppercase">Damage History</h2>
-        <div className="max-h-[70vh] overflow-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
+        <section className="card">
+          <h2 className="mb-2 font-semibold uppercase">Damage History</h2>
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
                 <th className="py-2">Date</th><th className="text-right">Printing</th><th className="text-right">Accubind</th><th className="text-right">Binding</th><th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
-                  <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
-                  <td className="text-right">{money(r.printing_damage)}</td>
-                  <td className="text-right">{money(r.accubind_damage)}</td>
-                  <td className="text-right">{money(r.binding_damage)}</td>
-                  <td className="pl-4">{r.submitted_by}</td>
-                  <td className="pl-2 text-right">
-                    {(fromAdmin || within24h(r.created_at)) && <RowMenu onEdit={() => openEdit(r)} onDelete={() => removeDamage(r)} />}
-                  </td>
-                </tr>
-              ))}
-              {!rows.length && <tr><td colSpan={5} className="py-6 text-center text-ink/60">No damage entries yet.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
+                    <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
+                    <td className="text-right">{money(r.printing_damage)}</td>
+                    <td className="text-right">{money(r.accubind_damage)}</td>
+                    <td className="text-right">{money(r.binding_damage)}</td>
+                    <td className="pl-4">{r.submitted_by}</td>
+                    <td className="pl-2 text-right">
+                      {(fromAdmin || within24h(r.created_at)) && <RowMenu onEdit={() => openEdit(r)} onDelete={() => removeDamage(r)} />}
+                    </td>
+                  </tr>
+                ))}
+                {!rows.length && <tr><td colSpan={6} className="py-6 text-center text-ink/60">No damage entries yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      {open && !fromAdmin && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
-          <form role="dialog" aria-modal="true" aria-label="Add damage entry" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
-            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold uppercase">Add Damage Entry</h2>
-              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
-            </div>
-            <label className="block text-sm font-medium">Date
-              <input className="input mt-1" type="date" max={todayStr} value={date} onChange={e => setDate(e.target.value)} required /></label>
-            <label className="block text-sm font-medium">Printing damage
-              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.printing} onChange={e => setF({ ...f, printing: e.target.value })} /></label>
-            <label className="block text-sm font-medium">Accubind damage
-              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.accubind} onChange={e => setF({ ...f, accubind: e.target.value })} /></label>
-            <label className="block text-sm font-medium">Binding damage
-              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.binding} onChange={e => setF({ ...f, binding: e.target.value })} /></label>
-            <label className="block text-sm font-medium">Your name
-              <input className="input mt-1" value={f.by} maxLength={60} autoComplete="name" placeholder="e.g. Nimal Perera" onChange={e => setF({ ...f, by: e.target.value })} required /></label>
-            <Notice m={msg} />
-            <div className="flex gap-2">
-              <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
-              <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save entry'}</button>
-            </div>
-          </form>
-        </div>
-      )}
-    </main>
+        {open && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
+            <form role="dialog" aria-modal="true" aria-label="Add damage entry" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
+              className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold uppercase">{editing ? 'Edit Damage Entry' : 'Add Damage Entry'}</h2>
+                <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
+              </div>
+              <label className="block text-sm font-medium">Date
+                <input className="input mt-1" type="date" max={todayStr} value={date} onChange={e => setDate(e.target.value)} required /></label>
+              <label className="block text-sm font-medium">Printing damage
+                <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.printing} onChange={e => setF({ ...f, printing: e.target.value })} /></label>
+              <label className="block text-sm font-medium">Accubind damage
+                <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.accubind} onChange={e => setF({ ...f, accubind: e.target.value })} /></label>
+              <label className="block text-sm font-medium">Binding damage
+                <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.binding} onChange={e => setF({ ...f, binding: e.target.value })} /></label>
+              <label className="block text-sm font-medium">Your name
+                <input className="input mt-1" value={f.by} maxLength={60} autoComplete="name" placeholder="e.g. Nimal Perera" onChange={e => setF({ ...f, by: e.target.value })} required /></label>
+              <Notice m={msg} />
+              <div className="flex gap-2">
+                <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
+                <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save entry'}</button>
+              </div>
+            </form>
+          </div>
+        )}
+      </main>
+    </>
   )
 }
 function ProjectsPage() {
@@ -680,19 +680,25 @@ function ProjectsPage() {
   )
 }
 
-function AdminShell() {
+function AdminNav() {
   const link = ({ isActive }) => `flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium sm:flex-none ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
   return (
+    <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
+      <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
+      <div className="flex flex-wrap gap-2">
+        <NavLink to="/admin/departments" className={link}><Building2 size={18} />Departments</NavLink>
+        <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
+        <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}><Logo slug="i-photobook" className="h-[18px] w-[18px]" />I PHO. DAM</NavLink>
+        <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
+      </div>
+    </nav>
+  )
+}
+
+function AdminShell() {
+  return (
     <>
-      <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
-        <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
-        <div className="flex gap-2">
-          <NavLink to="/admin/departments" className={link}><Building2 size={18} />Departments</NavLink>
-          <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
-          <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>I PHO. DAM</NavLink>
-          <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
-        </div>
-      </nav>
+      <AdminNav />
       <Outlet />
     </>
   )
