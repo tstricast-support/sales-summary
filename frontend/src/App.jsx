@@ -695,6 +695,7 @@ function ProjectsPage() {
   const [newSupName, setNewSupName] = useState('')
   const [collapsed, setCollapsed] = useState({}) // category name -> collapsed?
   const [printCat, setPrintCat] = useState(null)
+  const [printSup, setPrintSup] = useState(null)
   const [msg, setMsg] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -794,6 +795,15 @@ function ProjectsPage() {
   }, 150)
 }
 
+  const printSupplier = (catName, supName) => {
+  setPrintSup({ cat: catName, sup: supName })
+  setTimeout(() => {
+    document.body.classList.add('printing-supplier')
+    window.onafterprint = () => { document.body.classList.remove('printing-supplier'); setPrintSup(null) }
+    window.print()
+  }, 150)
+}
+
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -829,7 +839,13 @@ function ProjectsPage() {
                     <div key={supName} className="rounded-md bg-paper p-2.5">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
                         <p className="text-sm font-semibold">{supName}</p>
-                        <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
+                          <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printSupplier(catName, supName)}
+                            aria-label={`Print ${supName} report`} title="Print A4 report for this supplier">
+                            <Printer size={14} />
+                          </button>
+                        </div>
                       </div>
                       <table className="w-full text-left text-xs">
                         <tbody>
@@ -871,11 +887,17 @@ function ProjectsPage() {
               </div>
             </div>
             {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
-              <div key={supName} className="mb-4 break-inside-avoid">
-                <div className="mb-1 flex items-center justify-between border-b border-ink/10 pb-1">
-                  <h2 className="text-sm font-semibold uppercase">{supName}</h2>
-                  <p className="text-sm font-semibold">{money(sup.total)}</p>
-                </div>
+                    <div key={supName} className="rounded-md bg-paper p-2.5">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold">{supName}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
+                          <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printSupplier(catName, supName)}
+                            aria-label={`Print ${supName} report`} title="Print A4 report for this supplier">
+                            <Printer size={14} />
+                          </button>
+                        </div>
+                      </div>
                 <table className="w-full text-left text-sm">
                   <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="py-1 text-right">Amount</th></tr></thead>
                   <tbody>
@@ -888,6 +910,39 @@ function ProjectsPage() {
             ))}
             <div className="mt-4 flex justify-end border-t border-ink/20 pt-2 text-base font-bold">
               <p>Grand Total: {money(cat.total)}</p>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* A4 PRINT REPORT — single supplier — invisible on screen, shown only while printing */}
+      {printSup && (() => {
+        const entry = grouped.find(([name]) => name === printSup.cat)
+        const sup = entry && entry[1].suppliers.get(printSup.sup)
+        if (!sup) return null
+        const entries = sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date))
+        return (
+          <div className="sup-print-area p-6">
+            <div className="mb-4 flex items-center justify-between border-b border-ink/20 pb-3">
+              <div>
+                <h1 className="text-xl font-bold uppercase">{printSup.sup}</h1>
+                <p className="text-sm text-ink/60">{printSup.cat} · Project Expense Report</p>
+              </div>
+              <div className="text-right text-sm text-ink/60">
+                <p>Generated {sriDate(todayStr)}</p>
+                <p className="font-semibold text-ink">Total: {money(sup.total)}</p>
+              </div>
+            </div>
+            <table className="w-full text-left text-sm">
+              <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="py-1 text-right">Amount</th></tr></thead>
+              <tbody>
+                {entries.map(r => (
+                  <tr key={r.id}><td className="py-0.5">{sriDate(r.expense_date)}</td><td className="py-0.5 text-right">{money(r.cost)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-4 flex justify-end border-t border-ink/20 pt-2 text-base font-bold">
+              <p>Total: {money(sup.total)}</p>
             </div>
           </div>
         )

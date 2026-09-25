@@ -33,6 +33,10 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
   body.printing-category * { visibility: hidden; }
   body.printing-category .cat-print-area, body.printing-category .cat-print-area * { visibility: visible; }
   body.printing-category .cat-print-area { display: block; position: absolute; left: 0; top: 0; width: 100%; }
+  body.printing-supplier * { visibility: hidden; }
+  body.printing-supplier .sup-print-area, body.printing-supplier .sup-print-area * { visibility: visible; }
+  body.printing-supplier .sup-print-area { display: block; position: absolute; left: 0; top: 0; width: 100%; }
   .no-print { display: none !important; }
 }
 .cat-print-area { display: none; }
+.sup-print-area { display: none; }
