@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -593,6 +593,29 @@ function DamagePage() {
   const fromAdmin = useLocation().state?.admin
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
+  const [showGraph, setShowGraph] = useState(false)
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 640px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 640px)')
+    const h = e => setIsDesktop(e.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+
+  const [chartType, setChartType] = useState('line') // 'line' | 'bar' | 'pie'
+  const [chartOpen, setChartOpen] = useState(false)  // the line/bar/pie picker dropdown
+  const chartRef = useRef(null)
+  useEffect(() => {
+    if (!chartOpen) return
+    const close = e => { if (chartRef.current && !chartRef.current.contains(e.target)) setChartOpen(false) }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [chartOpen])
+
+  const [dgRange, setDgRange] = useState('monthly') // weekly | monthly | yearly | custom
+  const [customFrom, setCustomFrom] = useState(todayStr.slice(0, 8) + '01')
+  const [customTo, setCustomTo] = useState(todayStr)
+  const seg = on => `rounded-md border px-3 py-1.5 text-sm font-medium ${on ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`
   const [editing, setEditing] = useState(null)
   const [date, setDate] = useState(todayStr)
   const [rows, setRows] = useState(() => store.get('damages', []))
@@ -614,6 +637,39 @@ function DamagePage() {
     setF({ printing: String(r.printing_damage), accubind: String(r.accubind_damage), binding: String(r.binding_damage), by: r.submitted_by })
     setMsg(null); setOpen(true)
   }
+  const graphRange = (() => {
+    if (dgRange === 'custom') return { start: customFrom, end: customTo }
+    if (dgRange === 'weekly') { const s = new Date(); s.setDate(s.getDate() - ((s.getDay() + 6) % 7)); return { start: iso(s), end: todayStr } }
+    if (dgRange === 'monthly') { const s = new Date(); s.setDate(1); return { start: iso(s), end: todayStr } }
+    const s = new Date(); s.setMonth(0, 1)
+    return { start: iso(s), end: todayStr }
+  })()
+  const customInvalid = dgRange === 'custom' && (!customFrom || !customTo || customFrom > customTo)
+  const rangeLabel = { weekly: 'THIS WEEK', monthly: 'THIS MONTH', yearly: 'THIS YEAR', custom: `${graphRange.start} → ${graphRange.end}` }[dgRange]
+
+  // both the graph AND the history table below use this same filtered set
+  const filteredRows = rows.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
+
+  const chartData = (() => {
+    const bucketByMonth = dgRange === 'yearly' || (dgRange === 'custom' && !customInvalid && (new Date(graphRange.end) - new Date(graphRange.start)) / 86400000 > 31)
+    if (bucketByMonth) {
+      const m = {}
+      filteredRows.forEach(r => {
+        const k = r.record_date.slice(0, 7)
+        m[k] = m[k] || { date: k, Printing: 0, Accubind: 0, Binding: 0 }
+        m[k].Printing += Number(r.printing_damage); m[k].Accubind += Number(r.accubind_damage); m[k].Binding += Number(r.binding_damage)
+      })
+      return Object.values(m).sort((a, b) => a.date.localeCompare(b.date)).slice(-12)
+    }
+    return filteredRows.slice().sort((a, b) => a.record_date.localeCompare(b.record_date))
+      .map(r => ({ date: r.record_date.slice(5), Printing: Number(r.printing_damage), Accubind: Number(r.accubind_damage), Binding: Number(r.binding_damage) }))
+  })()
+
+  const pieData = [
+    { name: 'Printing', value: filteredRows.reduce((t, r) => t + Number(r.printing_damage), 0) },
+    { name: 'Accubind', value: filteredRows.reduce((t, r) => t + Number(r.accubind_damage), 0) },
+    { name: 'Binding', value: filteredRows.reduce((t, r) => t + Number(r.binding_damage), 0) },
+  ]
   const removeDamage = async r => {
     if (!window.confirm(`Delete the damage entry for ${sriDate(r.record_date)}?`)) return
     try {
@@ -657,18 +713,52 @@ function DamagePage() {
           <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl">
             <Logo slug="i-photobook" className="h-8 w-8" />I Photobook — Damage Log
           </h1>
-          <button className="btn" onClick={() => { setEditing(null); setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>
+          <div className="flex items-center gap-2">
+            <div ref={chartRef} className="relative">
+              <button className="btn-ghost" onClick={() => setChartOpen(o => !o)}>
+                <TrendingUp size={16} />GRAPH
+              </button>
+              {chartOpen && (
+                <div className="absolute left-0 z-20 mt-2 w-40 overflow-hidden rounded-md border border-ink/10 bg-white shadow-lg">
+                  {[['line', 'Line graph'], ['bar', 'Bar graph'], ['pie', 'Pie chart']].map(([k, l]) => (
+                    <button key={k}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-ink/5 ${chartType === k ? 'font-semibold text-ink' : 'text-ink/70'}`}
+                      onClick={() => { setChartType(k); setChartOpen(false); setShowGraph(true) }}>{l}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button className="btn" onClick={() => { setEditing(null); setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>
+          </div>
         </div>
         <Notice m={toast} />
 
         <section className="card">
-          <h2 className="mb-2 font-semibold uppercase">Damage History</h2>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold uppercase">Damage History – {rangeLabel}</h2>
+            <div className="flex flex-wrap gap-2">
+              {['weekly', 'monthly', 'yearly', 'custom'].map(k => (
+                <button key={k} onClick={() => setDgRange(k)} className={`${seg(dgRange === k)} capitalize`}>{k}</button>
+              ))}
+            </div>
+          </div>
+          {dgRange === 'custom' && (
+            <div className="mb-2 grid grid-cols-2 gap-3 sm:max-w-md">
+              <label className="block min-w-0 text-xs font-medium">From
+                <input type="date" className="input mt-1 min-w-0" value={customFrom} max={customTo || todayStr}
+                  onChange={e => e.target.value && setCustomFrom(e.target.value)} /></label>
+              <label className="block min-w-0 text-xs font-medium">To
+                <input type="date" className="input mt-1 min-w-0" value={customTo} min={customFrom} max={todayStr}
+                  onChange={e => e.target.value && setCustomTo(e.target.value)} /></label>
+            </div>
+          )}
+          {customInvalid && <p className="mb-2 text-xs text-red-700">From date must be on or before the To date.</p>}
           <div className="max-h-[70vh] overflow-auto">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
                 <th className="py-2">Date</th><th className="text-right">Printing</th><th className="text-right">Accubind</th><th className="text-right">Binding</th><th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
               <tbody>
-                {rows.map(r => (
+                {filteredRows.map(r => (
                   <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
                     <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
                     <td className="text-right">{money(r.printing_damage)}</td>
@@ -680,11 +770,47 @@ function DamagePage() {
                     </td>
                   </tr>
                 ))}
-                {!rows.length && <tr><td colSpan={6} className="py-6 text-center text-ink/60">No damage entries yet.</td></tr>}
+                {!filteredRows.length && <tr><td colSpan={6} className="py-6 text-center text-ink/60">No damage entries in this period.</td></tr>}
               </tbody>
             </table>
           </div>
         </section>
+        
+        {(isDesktop || showGraph) && (
+          <section className="card">
+            <h2 className="mb-3 font-semibold uppercase">Damage Trend – {rangeLabel}</h2>
+            {filteredRows.length ? (
+              <ResponsiveContainer width="100%" height={300}>
+                {chartType === 'pie' ? (
+                  <RePieChart>
+                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
+                      {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={v => money(v)} /><Legend />
+                  </RePieChart>
+                ) : chartType === 'bar' ? (
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="date" fontSize={12} /><YAxis fontSize={12} width={60} />
+                    <Tooltip formatter={v => money(v)} /><Legend />
+                    <Bar dataKey="Printing" fill="#0f766e" />
+                    <Bar dataKey="Accubind" fill="#c2410c" />
+                    <Bar dataKey="Binding" fill="#7c3aed" />
+                  </BarChart>
+                ) : (
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="date" fontSize={12} /><YAxis fontSize={12} width={60} />
+                    <Tooltip formatter={v => money(v)} /><Legend />
+                    <Line type="monotone" dataKey="Printing" stroke="#0f766e" strokeWidth={2} dot={chartData.length < 15} />
+                    <Line type="monotone" dataKey="Accubind" stroke="#c2410c" strokeWidth={2} dot={chartData.length < 15} />
+                    <Line type="monotone" dataKey="Binding" stroke="#7c3aed" strokeWidth={2} dot={chartData.length < 15} />
+                  </LineChart>
+                )}
+              </ResponsiveContainer>
+            ) : <p className="py-16 text-center text-ink/60">No damage entries in this period.</p>}
+          </section>
+        )}
 
         {open && (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
@@ -904,13 +1030,20 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
           <h2 className="font-semibold uppercase">Expense Report - by Category</h2>
           <p className="text-sm font-semibold">Grand total: {money(grandTotal)}</p>
         </div>
-        <input
+        <div className="relative mb-3">
+          <input
             type="text"
-            className="input mb-3 w-full"
+            className="input w-full pr-9"
             placeholder="Search category or supplier / worker…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          {search && (
+            <button type="button" onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-xl leading-none text-ink/40 hover:bg-ink/5 hover:text-ink/70"
+              aria-label="Clear search">×</button>
+          )}
+        </div>
         {!grouped.length && <p className="py-10 text-center text-ink/60">No entries yet. Tap + ADD PAYMENT to add one.</p>}
         <div className="space-y-3">
           {grouped.map(([catName, cat]) => (
