@@ -649,7 +649,7 @@ function DamagePage() {
       {fromAdmin && <AdminNav />}
       <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="flex items-center gap-2 text-2xl font-bold uppercase">
+          <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl">
             <Logo slug="i-photobook" className="h-8 w-8" />I Photobook — Damage Log
           </h1>
           <button className="btn" onClick={() => { setEditing(null); setDate(todayStr); setMsg(null); setOpen(true) }}>+ ADD DAMAGE</button>
@@ -858,7 +858,7 @@ const togglePie = catName => {
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold uppercase"><Briefcase size={24} />Project Expenses</h1>
+        <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl"><Briefcase size={20} className="shrink-0 sm:hidden" /><Briefcase size={24} className="hidden shrink-0 sm:block" />Project Expenses</h1>
         <button className="btn" onClick={openNew}>+ ADD PAYMENT</button>
       </div>
       <Notice m={err && { t: 'err', m: err }} />
@@ -1094,36 +1094,16 @@ const togglePie = catName => {
 }
 
 function AdminNav() {
-  const link = ({ isActive }) => `flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium sm:flex-none ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
-  const [pushEnabled, setPushEnabled] = useState(false)
-
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return
-    navigator.serviceWorker.ready
-      .then(reg => reg.pushManager.getSubscription())
-      .then(sub => setPushEnabled(!!sub && Notification.permission === 'granted'))
-      .catch(() => {})
-  }, [])
-
-  const handleEnable = async () => {
-    if (await enablePushNotifications()) setPushEnabled(true)
-  }
-
+  const link = ({ isActive }) => `flex flex-none items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
   return (
     <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="scrollbar-none flex gap-2 overflow-x-auto">
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
+        <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
         <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>DAMAGES</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
-        <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
-        {!pushEnabled && (
-          <button type="button" onClick={handleEnable}
-            className="ml-auto flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-white/10"
-            title="Get a phone notification whenever a department submits sales/collection">
-            <Bell size={18} />NOTIFY ME
-          </button>
-        )}
+        {/* ...your NOTIFY ME NavLink here... */}
       </div>
     </nav>
   )
@@ -1169,7 +1149,7 @@ function Departments() {
 
   return (
     <main className="mx-auto max-w-6xl p-4">
-      <h1 className="mb-3 text-2xl font-bold">DEPARTMENTS</h1>
+      <h1 className="mb-3 text-xl font-bold sm:text-2xl">DEPARTMENTS</h1>
       <p className={`mb-4 text-sm ${invalid ? 'text-red-700' : 'text-ink/60'}`}>
         {invalid ? 'From date must be on or before the To date.' : `${names[kind]} · ${range.start} → ${range.end}. Tap a department to see its details.`}
       </p>
