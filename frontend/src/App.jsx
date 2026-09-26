@@ -37,6 +37,7 @@ const store = {
 }
 const rangeFor = kind => {
   const end = new Date(), start = new Date()
+  if (kind === 'yesterday') { start.setDate(start.getDate() - 1); end.setDate(end.getDate() - 1) }
   if (kind === 'weekly') start.setDate(end.getDate() - 6)
   if (kind === 'monthly') start.setDate(1)
   if (kind === 'yearly') start.setMonth(0, 1)
@@ -255,6 +256,10 @@ const openEntry = useCallback(d => { setMode('day'); setDate(d || todayStr); set
   // TOTAL section: work out the selected period (a week is Monday to Sunday)
 const totalRange = (() => {
   const d = new Date((tDate || todayStr) + 'T00:00:00')
+  if (tMode === 'yesterday') {
+    const y = new Date(); y.setDate(y.getDate() - 1)
+    return { start: iso(y), end: iso(y), label: `Yesterday (${iso(y)})` }
+  }
   if (tMode === 'date') return { start: iso(d), end: iso(d), label: iso(d) }
   if (tMode === 'week') {
     const s = new Date(d); s.setDate(d.getDate() - ((d.getDay() + 6) % 7))
@@ -334,10 +339,10 @@ useEffect(() => {
         <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:right-auto sm:w-72">
           <p className="text-xs font-semibold uppercase text-ink/60">{totalRange.label}</p>
           <div className="grid grid-cols-2 gap-2">
-            {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']].map(([k, l]) => (
-              <button key={k} onClick={() => setTMode(k)} className={seg(tMode === k)}>{l}</button>
-            ))}
-          </div>
+          {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year'], ['yesterday', 'Yesterday']].map(([k, l]) => (
+            <button key={k} onClick={() => setTMode(k)} className={seg(tMode === k)}>{l}</button>
+          ))}
+        </div>
           {(tMode === 'date' || tMode === 'week') && (
             <input type="date" className="input" max={todayStr} value={tDate} onChange={e => e.target.value && setTDate(e.target.value)} />
           )}
@@ -1165,7 +1170,7 @@ function Departments() {
     return () => { live = false }
   }, [range.start, range.end, invalid])
 
-  const names = { today: 'Today', weekly: 'Last 7 days', monthly: 'This month', yearly: 'This year', custom: 'Custom' }
+const names = { today: 'Today', yesterday: 'Yesterday', weekly: 'Last 7 days', monthly: 'This month', yearly: 'This year', custom: 'Custom' }
 
   return (
     <main className="mx-auto max-w-6xl p-4">
@@ -1327,7 +1332,7 @@ function Dashboard() {
   }, 150)
 }
 
-    const names = { daily: 'Today', weekly: 'Last 7 days', monthly: 'This month', yearly: 'This year', custom: 'Custom' }
+  const names = { daily: 'Today', yesterday: 'Yesterday', weekly: 'Last 7 days', monthly: 'This month', yearly: 'This year', custom: 'Custom' }
   const chev = open => <ChevronRight size={20} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
 
   return (
