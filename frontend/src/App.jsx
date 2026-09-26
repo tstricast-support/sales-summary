@@ -718,7 +718,7 @@ function DamagePage() {
 }
 function ProjectsPage() {
   const todayStr = iso(new Date())
-  const emptyForm = { category_id: '', supplier_id: '', cost: '', expense_date: todayStr }
+  const emptyForm = { category_id: '', supplier_id: '', cost: '', expense_date: todayStr, description: '' }
   const [rows, setRows] = useState([])
   const [categories, setCategories] = useState([])
   const [suppliers, setSuppliers] = useState([])
@@ -734,6 +734,13 @@ function ProjectsPage() {
   const [printCat, setPrintCat] = useState(null)
   const [printSup, setPrintSup] = useState(null)
   const [pieCat, setPieCat] = useState(null) // category name currently showing its pie chart
+  const [quick, setQuick] = useState(null) // { supplierId, supplierName, categoryName } when the quick-pay sheet is open
+  const [quickCost, setQuickCost] = useState('')
+  const [quickDate, setQuickDate] = useState(todayStr)
+  const [quickDesc, setQuickDesc] = useState('')
+  const [quickMsg, setQuickMsg] = useState(null)
+  const [quickBusy, setQuickBusy] = useState(false)
+  const longPressTimer = useRef(null)
   const [msg, setMsg] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -753,10 +760,10 @@ function ProjectsPage() {
 
   const openNew = () => { setEditing(null); setF(emptyForm); setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true) }
   const openEdit = r => {
-    setEditing(r)
-    setF({ category_id: String(r.category_id), supplier_id: String(r.supplier_id), cost: String(r.cost), expense_date: r.expense_date })
-    setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true)
-  }
+  setEditing(r)
+  setF({ category_id: String(r.category_id), supplier_id: String(r.supplier_id), cost: String(r.cost), expense_date: r.expense_date, description: r.description || '' })
+  setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true)
+}
 
   // creating a category/supplier here immediately adds it to the select list, ready to pick next time
   const addCategory = async () => {
@@ -791,7 +798,7 @@ function ProjectsPage() {
     const cost = parseFloat(f.cost)
     if (!(cost >= 0)) return setMsg({ t: 'err', m: 'Amount must be a number of 0 or more.' })
     const expense_date = f.expense_date || todayStr // blank date auto-fills to today
-    const body = { supplier_id: Number(f.supplier_id), cost, expense_date }
+    const body = { supplier_id: Number(f.supplier_id), cost, expense_date, description: f.description.trim() || null }    
     setBusy(true)
     try {
       if (editing) await call(`/api/projects/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
@@ -860,6 +867,30 @@ const togglePie = catName => {
   setPieCat(p => (p === catName ? null : catName))
 }
 
+const openQuickPay = (catName, supName, supplierId) => {
+  setQuick({ supplierId, supplierName: supName, categoryName: catName })
+  setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
+}
+
+const submitQuick = async e => {
+  e.preventDefault(); setQuickMsg(null)
+  const cost = parseFloat(quickCost)
+  if (!(cost >= 0)) return setQuickMsg({ t: 'err', m: 'Amount must be a number of 0 or more.' })
+  setQuickBusy(true)
+  try {
+    await call('/api/projects', { method: 'POST', body: JSON.stringify({
+      supplier_id: quick.supplierId, cost, expense_date: quickDate || todayStr, description: quickDesc.trim() || null,
+    }) })
+    setQuick(null); await load()
+  } catch (err) { setQuickMsg({ t: 'err', m: err.status ? err.message : 'Cannot reach the server. Check your connection.' }) }
+  setQuickBusy(false)
+}
+
+const startLongPress = (catName, supName, supplierId) => {
+  longPressTimer.current = setTimeout(() => openQuickPay(catName, supName, supplierId), 500)
+}
+const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null } }
+
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -921,7 +952,13 @@ const togglePie = catName => {
                     </div>
                   )}
                   {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
-                    <div key={supName} className="rounded-md bg-paper p-2.5">
+                    <div key={supName} className="rounded-md bg-paper p-2.5 select-none"
+                      onPointerDown={() => startLongPress(catName, supName, sup.entries[0]?.supplier_id)}
+                      onPointerUp={cancelLongPress}
+                      onPointerLeave={cancelLongPress}
+                      onPointerCancel={cancelLongPress}
+                      onContextMenu={e => e.preventDefault()}
+                    >
                       <div className="mb-1.5 flex items-center justify-between gap-2">
                         <p className="text-sm font-semibold">{supName}</p>
                         <div className="flex items-center gap-2">
@@ -932,19 +969,24 @@ const togglePie = catName => {
                           </button>
                         </div>
                       </div>
-                      <table className="w-full text-left text-xs">
-                        <tbody>
-                          {sup.entries.map(r => (
-                            <tr key={r.id} className="border-b border-ink/5 last:border-0">
-                              <td className="py-1.5 pr-2 whitespace-nowrap text-ink/70">{sriDate(r.expense_date)}</td>
-                              <td className="py-1.5 text-right">{money(r.cost)}</td>
-                              <td className="py-1.5 pl-2 text-right no-print">
-                                <RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      <div className="space-y-2">
+                        {sup.entries.map(r => (
+                          <div key={r.id} className="border-b border-ink/5 pb-2 last:border-0 last:pb-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="whitespace-nowrap text-ink/70">{sriDate(r.expense_date)}</span>
+                              <span className="flex items-center gap-2">
+                                <span className="font-medium">{money(r.cost)}</span>
+                                <span className="no-print"><RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} /></span>
+                              </span>
+                            </div>
+                            {r.description && (
+                              <div className="mt-1 break-words rounded-md border border-ink/10 bg-white px-2 py-1.5 text-ink/80">
+                                {r.description}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1080,16 +1122,48 @@ const togglePie = catName => {
               </div>
             )}
 
-            <label className="block text-sm font-medium">Amount paid
+          <label className="block text-sm font-medium">Amount paid
               <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.cost}
                 onChange={e => setF({ ...f, cost: e.target.value })} required /></label>
+            <label className="block text-sm font-medium">Description <span className="font-normal text-ink/60">(optional)</span>
+              <input className="input mt-1" maxLength={300} placeholder="e.g. Cement for foundation" value={f.description}
+                onChange={e => setF({ ...f, description: e.target.value })} /></label>
             <label className="block text-sm font-medium">Date <span className="font-normal text-ink/60">(leave as today, or pick a past date)</span>
               <input className="input mt-1" type="date" max={todayStr} value={f.expense_date}
                 onChange={e => setF({ ...f, expense_date: e.target.value })} /></label>
             <Notice m={msg} />
-            <div className="flex gap-2">
+                        <div className="flex gap-2">
               <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
               <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {quick && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setQuick(null)}>
+          <form role="dialog" aria-modal="true" aria-label="Quick payment" onClick={e => e.stopPropagation()} onSubmit={submitQuick} noValidate
+            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold uppercase">Quick payment</h2>
+                <p className="text-xs text-ink/60">{quick.supplierName} · {quick.categoryName}</p>
+              </div>
+              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setQuick(null)} aria-label="Close">×</button>
+            </div>
+            <label className="block text-sm font-medium">Amount paid
+              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={quickCost}
+                onChange={e => setQuickCost(e.target.value)} required autoFocus /></label>
+            <label className="block text-sm font-medium">Description <span className="font-normal text-ink/60">(optional)</span>
+              <input className="input mt-1" maxLength={300} placeholder="e.g. Cement for foundation" value={quickDesc}
+                onChange={e => setQuickDesc(e.target.value)} /></label>
+            <label className="block text-sm font-medium">Date <span className="font-normal text-ink/60">(leave as today, or pick a past date)</span>
+              <input className="input mt-1" type="date" max={todayStr} value={quickDate}
+                onChange={e => setQuickDate(e.target.value)} /></label>
+            <Notice m={quickMsg} />
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setQuick(null)}>Cancel</button>
+              <button className="btn flex-1" disabled={quickBusy}><Save size={18} />{quickBusy ? 'Saving…' : 'Save'}</button>
             </div>
           </form>
         </div>
@@ -1279,6 +1353,25 @@ function Dashboard() {
   const startEditCat = c => { setEditingSup(null); setEditingCat(c.id); setEditName(c.name); setManageErr('') }
   const startEditSup = s => { setEditingCat(null); setEditingSup(s.id); setEditName(s.name); setManageErr('') }
   const cancelEdit = () => { setEditingCat(null); setEditingSup(null); setEditName('') }
+  const removeCategory = async c => {
+  if (!window.confirm(`Delete the category "${c.name}"? This only works if it has no suppliers left.`)) return
+  setCatBusy(true)
+  try {
+    await call(`/api/project-categories/${c.id}`, { method: 'DELETE' })
+    await loadCatSup()
+  } catch (e) { setManageErr(e.message || 'Could not delete category.') }
+  setCatBusy(false)
+}
+
+const removeSupplier = async s => {
+  if (!window.confirm(`Delete the supplier "${s.name}"? This only works if it has no expense entries left.`)) return
+  setCatBusy(true)
+  try {
+    await call(`/api/project-suppliers/${s.id}`, { method: 'DELETE' })
+    await loadCatSup()
+  } catch (e) { setManageErr(e.message || 'Could not delete supplier.') }
+  setCatBusy(false)
+}
 
   const saveCategory = async id => {
     const name = editName.trim()
@@ -1397,9 +1490,7 @@ function Dashboard() {
                   ) : (
                     <>
                       <span className="font-semibold">{c.name}</span>
-                      <button className="btn-ghost !px-2 !py-1" onClick={() => startEditCat(c)} aria-label={`Edit ${c.name}`}>
-                        <Pencil size={14} />Edit
-                      </button>
+                        <RowMenu onEdit={() => startEditCat(c)} onDelete={() => removeCategory(c)} />
                     </>
                   )}
                 </div>
@@ -1415,9 +1506,7 @@ function Dashboard() {
                       ) : (
                         <>
                           <span className="text-sm text-ink/80">{s.name}</span>
-                          <button className="btn-ghost !px-2 !py-1" onClick={() => startEditSup(s)} aria-label={`Edit ${s.name}`}>
-                            <Pencil size={14} />Edit
-                          </button>
+                          <RowMenu onEdit={() => startEditSup(s)} onDelete={() => removeSupplier(s)} />
                         </>
                       )}
                     </div>

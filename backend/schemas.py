@@ -139,6 +139,7 @@ class ProjectIn(BaseModel):
     supplier_id: int
     cost: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     expense_date: date = Field(default_factory=date.today)
+    description: str | None = None
 
 
 class ProjectOut(BaseModel):
@@ -150,6 +151,7 @@ class ProjectOut(BaseModel):
     category_name: str
     cost: float
     expense_date: date
+    description: str | None = None
     updated_at: datetime | None = None
 
 class PushSubscriptionIn(BaseModel):

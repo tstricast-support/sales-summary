@@ -218,6 +218,27 @@ def edit_project_supplier(supplier_id: int, data: schemas.SupplierIn, db: Sessio
     except ValueError as e:
         raise HTTPException(409, str(e))
 
+@app.delete("/api/project-categories/{category_id}")
+def delete_project_category(category_id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_category(db, category_id)
+        return {"status": "ok"}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.delete("/api/project-suppliers/{supplier_id}")
+def delete_project_supplier(supplier_id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_supplier(db, supplier_id)
+        return {"status": "ok"}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
 @app.get("/api/projects", response_model=list[schemas.ProjectOut])
 def projects(db: Session = Depends(get_db)):
     return crud.list_projects(db)

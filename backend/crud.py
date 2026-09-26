@@ -210,6 +210,25 @@ def update_supplier(db, supplier_id: int, s: schemas.SupplierIn):
     db.commit(); db.refresh(sup)
     return sup
 
+def delete_category(db, category_id: int):
+    cat = db.query(models.ProjectCategory).get(category_id)
+    if not cat:
+        raise LookupError("Category not found")
+    if db.query(models.ProjectSupplier).filter_by(category_id=category_id).first():
+        raise ValueError("Remove all suppliers in this category first.")
+    db.delete(cat)
+    db.commit()
+
+
+def delete_supplier(db, supplier_id: int):
+    sup = db.query(models.ProjectSupplier).get(supplier_id)
+    if not sup:
+        raise LookupError("Supplier not found")
+    if db.query(models.ProjectExpense).filter_by(supplier_id=supplier_id).first():
+        raise ValueError("This supplier has expense entries. Delete those entries first.")
+    db.delete(sup)
+    db.commit()
+
 def list_projects(db):
     return (db.query(models.ProjectExpense)
             .options(joinedload(models.ProjectExpense.supplier).joinedload(models.ProjectSupplier.category))
@@ -219,7 +238,7 @@ def list_projects(db):
 def add_project(db, p: schemas.ProjectIn):
     if not db.query(models.ProjectSupplier).get(p.supplier_id):
         raise LookupError("Unknown supplier")
-    rec = models.ProjectExpense(supplier_id=p.supplier_id, cost=p.cost, expense_date=p.expense_date)
+    rec = models.ProjectExpense(supplier_id=p.supplier_id, cost=p.cost, expense_date=p.expense_date, description=p.description)
     db.add(rec); db.commit(); db.refresh(rec)
     return rec
 
@@ -230,7 +249,7 @@ def update_project(db, project_id: int, p: schemas.ProjectIn):
         raise LookupError("Project entry not found")
     if not db.query(models.ProjectSupplier).get(p.supplier_id):
         raise LookupError("Unknown supplier")
-    rec.supplier_id, rec.cost, rec.expense_date = p.supplier_id, p.cost, p.expense_date
+    rec.supplier_id, rec.cost, rec.expense_date, rec.description = p.supplier_id, p.cost, p.expense_date, p.description
     db.commit(); db.refresh(rec)
     return rec
 

@@ -78,6 +78,7 @@ class ProjectExpense(Base):
     supplier_id = Column(Integer, ForeignKey("project_suppliers.id"), nullable=False, index=True)
     cost = Column(Numeric(14, 2), nullable=False, default=0)
     expense_date = Column(Date, nullable=False, index=True)
+    description = Column(String(300))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     supplier = relationship("ProjectSupplier")
