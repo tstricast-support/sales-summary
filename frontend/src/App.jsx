@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -1095,15 +1095,35 @@ const togglePie = catName => {
 
 function AdminNav() {
   const link = ({ isActive }) => `flex flex-none items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
+  const [pushEnabled, setPushEnabled] = useState(false)
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    navigator.serviceWorker.ready
+      .then(reg => reg.pushManager.getSubscription())
+      .then(sub => setPushEnabled(!!sub && Notification.permission === 'granted'))
+      .catch(() => {})
+  }, [])
+
+  const handleEnable = async () => {
+    if (await enablePushNotifications()) setPushEnabled(true)
+  }
+
   return (
     <nav className="no-print sticky top-0 z-10 bg-ink px-4 py-2 text-white">
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
       <div className="scrollbar-none flex gap-2 overflow-x-auto">
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
-        <NavLink to="/admin/dashboard" className={link}><LayoutDashboard size={18} />MANAGE</NavLink>
         <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>DAMAGES</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
-        {/* ...your NOTIFY ME NavLink here... */}
+        <NavLink to="/admin/dashboard" className={link}><Settings size={18} />MANAGE</NavLink>
+        {!pushEnabled && (
+          <button type="button" onClick={handleEnable}
+            className="ml-auto flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-white/10"
+            title="Get a phone notification whenever a department submits sales/collection">
+            <Bell size={18} />
+          </button>
+        )}
       </div>
     </nav>
   )
