@@ -326,17 +326,17 @@ useEffect(() => {
     <div ref={tRef} className="relative w-full sm:w-auto">
       <button onClick={() => setTOpen(o => !o)} aria-expanded={tOpen}
         className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30 sm:w-auto">
-        <span className="flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:flex-none">
+        <span className="min-w-0 flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:w-48 sm:flex-none">
           <span className="block text-xs uppercase text-ink/60">Sales</span>
           <span className="block text-lg font-bold text-sale">{money(tot.sales)}</span>
         </span>
-        <span className="flex-1 bg-orange-50 px-4 py-2.5 text-left sm:flex-none">
+        <span className="min-w-0 flex-1 bg-orange-50 px-4 py-2.5 text-left sm:w-48 sm:flex-none">
           <span className="block text-xs uppercase text-ink/60">Collection</span>
           <span className="block text-lg font-bold text-coll">{money(tot.collection)}</span>
         </span>
       </button>
       {tOpen && (
-        <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:right-auto sm:w-72">
+        <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:left-auto sm:right-0 sm:w-72">
           <p className="text-xs font-semibold uppercase text-ink/60">{totalRange.label}</p>
           <div className="grid grid-cols-2 gap-2">
           {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year'], ['yesterday', 'Yesterday']].map(([k, l]) => (
@@ -1389,18 +1389,17 @@ const names = { today: 'Today', yesterday: 'Yesterday', weekly: 'Last 7 days', m
         <div className="relative w-full sm:w-auto">
           <button onClick={() => setOpen(o => !o)} aria-expanded={open}
             className="flex w-full overflow-hidden rounded-md border border-ink/10 hover:border-ink/30 sm:w-auto">
-            <span className="flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:flex-none">
-              <span className="block text-xs uppercase text-ink/60">Sales</span>
+            <span className="min-w-0 flex-1 bg-emerald-50 px-4 py-2.5 text-left sm:w-48 sm:flex-none">              <span className="block text-xs uppercase text-ink/60">Sales</span>
               <span className="block text-lg font-bold text-sale">{money(tot.sales)}</span>
             </span>
-            <span className="flex-1 bg-orange-50 px-4 py-2.5 text-left sm:flex-none">
+            <span className="min-w-0 flex-1 bg-orange-50 px-4 py-2.5 text-left sm:w-48 sm:flex-none">
               <span className="block text-xs uppercase text-ink/60">Collection</span>
               <span className="block text-lg font-bold text-coll">{money(tot.collection)}</span>
             </span>
           </button>
 
           {open && (
-            <div className="absolute left-0 right-0 z-20 mt-2 space-y-2 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:right-auto sm:w-72">
+            <div className="absolute left-0 right-0 z-20 mt-2 space-y-2 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:left-auto sm:right-0 sm:w-72">
               <p className="text-xs font-semibold uppercase text-ink/60">
                 {invalid ? 'From date must be on or before the To date.' : `${names[kind]} · ${range.start} → ${range.end}`}
               </p>
