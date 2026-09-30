@@ -998,10 +998,17 @@ const openQuickPay = (catName, supName, supplierId) => {
   setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
 }
 
+const openQuickPayPicker = () => {
+  setQuick({ pick: true, categoryId: '', supplierId: '', supplierName: '', categoryName: '' })
+  setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
+}
+
 const submitQuick = async e => {
   e.preventDefault(); setQuickMsg(null)
   const cost = parseFloat(quickCost)
   if (!(cost >= 0)) return setQuickMsg({ t: 'err', m: 'Amount must be a number of 0 or more.' })
+  
+  if (!quick.supplierId) return setQuickMsg({ t: 'err', m: 'Choose a category and a supplier / worker.' })
   setQuickBusy(true)
   try {
     await call('/api/projects', { method: 'POST', body: JSON.stringify({
@@ -1021,7 +1028,10 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl"><Briefcase size={20} className="shrink-0 sm:hidden" /><Briefcase size={24} className="hidden shrink-0 sm:block" />Project Expenses</h1>
-        <button className="btn" onClick={openNew}>+ ADD PAYMENT</button>
+        <div className="flex items-center gap-2">
+          <button className="btn" onClick={openQuickPayPicker}>+ ADD PAYMENT</button>
+          <button className="btn" onClick={openNew}>+ CREATE</button>
+        </div>
       </div>
       <Notice m={err && { t: 'err', m: err }} />
 
@@ -1044,7 +1054,7 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
               aria-label="Clear search">×</button>
           )}
         </div>
-        {!grouped.length && <p className="py-10 text-center text-ink/60">No entries yet. Tap + ADD PAYMENT to add one.</p>}
+        {!grouped.length && <p className="py-10 text-center text-ink/60">No entries yet. Tap + CREATE to add one.</p>}
         <div className="space-y-3">
           {grouped.map(([catName, cat]) => (
             <div key={catName} className="rounded-lg border border-ink/10">
@@ -1280,13 +1290,32 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-semibold uppercase">Quick payment</h2>
-                <p className="text-xs text-ink/60">{quick.supplierName} · {quick.categoryName}</p>
+                {!quick.pick && <p className="text-xs text-ink/60">{quick.supplierName} · {quick.categoryName}</p>}
               </div>
               <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setQuick(null)} aria-label="Close">×</button>
             </div>
             <label className="block text-sm font-medium">Amount paid
+
+            {quick.pick && (
+              <>
+                <label className="block text-sm font-medium">Category
+                  <select className="input mt-1" value={quick.categoryId}
+                    onChange={e => setQuick(q => ({ ...q, categoryId: e.target.value, supplierId: '' }))}>
+                    <option value="">Choose category…</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </label>
+                <label className="block text-sm font-medium">Supplier / worker
+                  <select className="input mt-1" disabled={!quick.categoryId} value={quick.supplierId}
+                    onChange={e => setQuick(q => ({ ...q, supplierId: e.target.value }))}>
+                    <option value="">{quick.categoryId ? 'Choose supplier…' : 'Choose a category first'}</option>
+                    {suppliers.filter(s => String(s.category_id) === String(quick.categoryId)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </label>
+              </>
+            )}
               <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={quickCost}
-                onChange={e => setQuickCost(e.target.value)} required autoFocus /></label>
+                onChange={e => setQuickCost(e.target.value)} required autoFocus={!quick.pick} /></label>
             <label className="block text-sm font-medium">Description <span className="font-normal text-ink/60">(optional)</span>
               <input className="input mt-1" maxLength={300} placeholder="e.g. Cement for foundation" value={quickDesc}
                 onChange={e => setQuickDesc(e.target.value)} /></label>
