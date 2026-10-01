@@ -864,6 +864,8 @@ function ProjectsPage() {
   const [quickCost, setQuickCost] = useState('')
   const [quickDate, setQuickDate] = useState(todayStr)
   const [quickDesc, setQuickDesc] = useState('')
+  const [quickSupSearch, setQuickSupSearch] = useState('')
+  const [supListOpen, setSupListOpen] = useState(false)
   const [quickMsg, setQuickMsg] = useState(null)
   const [quickBusy, setQuickBusy] = useState(false)
   const longPressTimer = useRef(null)
@@ -886,10 +888,10 @@ function ProjectsPage() {
 
   const openNew = () => { setEditing(null); setF(emptyForm); setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true) }
   const openEdit = r => {
-  setEditing(r)
-  setF({ category_id: String(r.category_id), supplier_id: String(r.supplier_id), cost: String(r.cost), expense_date: r.expense_date, description: r.description || '' })
-  setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true)
-}
+    setEditing(r)
+    setF({ category_id: String(r.category_id), supplier_id: String(r.supplier_id), cost: String(r.cost), expense_date: r.expense_date, description: r.description || '' })
+    setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true)
+  }
 
   // creating a category/supplier here immediately adds it to the select list, ready to pick next time
   const addCategory = async () => {
@@ -924,7 +926,7 @@ function ProjectsPage() {
     const cost = parseFloat(f.cost)
     if (!(cost >= 0)) return setMsg({ t: 'err', m: 'Amount must be a number of 0 or more.' })
     const expense_date = f.expense_date || todayStr // blank date auto-fills to today
-    const body = { supplier_id: Number(f.supplier_id), cost, expense_date, description: f.description.trim() || null }    
+    const body = { supplier_id: Number(f.supplier_id), cost, expense_date, description: f.description.trim() || null }
     setBusy(true)
     try {
       if (editing) await call(`/api/projects/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
@@ -967,62 +969,62 @@ function ProjectsPage() {
     }
     return list
   })()
-  const grandTotal = rows.reduce((t, r) => t + Number(r.cost), 0)
+  // const grandTotal = rows.reduce((t, r) => t + Number(r.cost), 0)
   const toggleCat = name => setCollapsed(c => ({ ...c, [name]: !c[name] }))
 
   const printCategory = catName => {
-  setPrintCat(catName)
-  setTimeout(() => {
-    document.body.classList.add('printing-category')
-    window.onafterprint = () => { document.body.classList.remove('printing-category'); setPrintCat(null) }
-    window.print()
-  }, 150)
-}
+    setPrintCat(catName)
+    setTimeout(() => {
+      document.body.classList.add('printing-category')
+      window.onafterprint = () => { document.body.classList.remove('printing-category'); setPrintCat(null) }
+      window.print()
+    }, 150)
+  }
 
   const printSupplier = (catName, supName) => {
-  setPrintSup({ cat: catName, sup: supName })
-  setTimeout(() => {
-    document.body.classList.add('printing-supplier')
-    window.onafterprint = () => { document.body.classList.remove('printing-supplier'); setPrintSup(null) }
-    window.print()
-  }, 150)
-}
+    setPrintSup({ cat: catName, sup: supName })
+    setTimeout(() => {
+      document.body.classList.add('printing-supplier')
+      window.onafterprint = () => { document.body.classList.remove('printing-supplier'); setPrintSup(null) }
+      window.print()
+    }, 150)
+  }
 
-const togglePie = catName => {
-  setCollapsed(c => ({ ...c, [catName]: true })) // roll this category open
-  setPieCat(p => (p === catName ? null : catName))
-}
+  const togglePie = catName => {
+    setCollapsed(c => ({ ...c, [catName]: true })) // roll this category open
+    setPieCat(p => (p === catName ? null : catName))
+  }
 
-const openQuickPay = (catName, supName, supplierId) => {
-  setQuick({ supplierId, supplierName: supName, categoryName: catName })
-  setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
-}
+  const openQuickPay = (catName, supName, supplierId) => {
+    setQuick({ supplierId, supplierName: supName, categoryName: catName })
+    setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
+  }
 
-const openQuickPayPicker = () => {
-  setQuick({ pick: true, categoryId: '', supplierId: '', supplierName: '', categoryName: '' })
-  setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
-}
+  const openQuickPayPicker = () => {
+    setQuick({ pick: true, categoryId: '', supplierId: '', supplierName: '', categoryName: '' })
+    setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
+    setQuickSupSearch(''); setSupListOpen(false)
+  }
 
-const submitQuick = async e => {
-  e.preventDefault(); setQuickMsg(null)
-  const cost = parseFloat(quickCost)
-  if (!(cost >= 0)) return setQuickMsg({ t: 'err', m: 'Amount must be a number of 0 or more.' })
-  
-  if (!quick.supplierId) return setQuickMsg({ t: 'err', m: 'Choose a category and a supplier / worker.' })
-  setQuickBusy(true)
-  try {
-    await call('/api/projects', { method: 'POST', body: JSON.stringify({
-      supplier_id: quick.supplierId, cost, expense_date: quickDate || todayStr, description: quickDesc.trim() || null,
-    }) })
-    setQuick(null); await load()
-  } catch (err) { setQuickMsg({ t: 'err', m: err.status ? err.message : 'Cannot reach the server. Check your connection.' }) }
-  setQuickBusy(false)
-}
+  const submitQuick = async e => {
+    e.preventDefault(); setQuickMsg(null)
+    const cost = parseFloat(quickCost)
+    if (!(cost >= 0)) return setQuickMsg({ t: 'err', m: 'Amount must be a number of 0 or more.' })
+    if (!quick.supplierId) return setQuickMsg({ t: 'err', m: 'Choose a supplier / worker.' })
+    setQuickBusy(true)
+    try {
+      await call('/api/projects', { method: 'POST', body: JSON.stringify({
+        supplier_id: quick.supplierId, cost, expense_date: quickDate || todayStr, description: quickDesc.trim() || null,
+      }) })
+      setQuick(null); await load()
+    } catch (err) { setQuickMsg({ t: 'err', m: err.status ? err.message : 'Cannot reach the server. Check your connection.' }) }
+    setQuickBusy(false)
+  }
 
-const startLongPress = (catName, supName, supplierId) => {
-  longPressTimer.current = setTimeout(() => openQuickPay(catName, supName, supplierId), 500)
-}
-const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null } }
+  const startLongPress = (catName, supName, supplierId) => {
+    longPressTimer.current = setTimeout(() => openQuickPay(catName, supName, supplierId), 500)
+  }
+  const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null } }
 
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
@@ -1038,7 +1040,7 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
       <section className="card">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-semibold uppercase">Expense Report - by Category</h2>
-          <p className="text-sm font-semibold">Grand total: {money(grandTotal)}</p>
+          {/* <p className="text-sm font-semibold">Grand total: {money(grandTotal)}</p> */}
         </div>
         <div className="relative mb-3">
           <input
@@ -1066,9 +1068,9 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
                 </button>
                 <span className="text-sm font-semibold">{money(cat.total)}</span>
                 <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => togglePie(catName)}
-                aria-label={`Show ${catName} pie chart`} title="Show supplier breakdown as a pie chart">
-                <PieChart size={16} />
-              </button>
+                  aria-label={`Show ${catName} pie chart`} title="Show supplier breakdown as a pie chart">
+                  <PieChart size={16} />
+                </button>
                 <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printCategory(catName)}
                   aria-label={`Print ${catName} report`} title="Print A4 report for this category">
                   <Printer size={16} />
@@ -1113,20 +1115,22 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
                         </div>
                       </div>
                       <div className="space-y-2">
-                        {sup.entries.map(r => (
+                        {sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date) || a.id - b.id).map(r => (
                           <div key={r.id} className="border-b border-ink/5 pb-2 last:border-0 last:pb-0">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="whitespace-nowrap text-ink/70">{sriDate(r.expense_date)}</span>
-                              <span className="flex items-center gap-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                                <span className="whitespace-nowrap text-ink/70">{sriDate(r.expense_date)}</span>
+                                {r.description && (
+                                  <span className="max-w-full break-words rounded-md border border-ink/10 bg-white px-2 py-1 text-ink/80">
+                                    {r.description}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="flex shrink-0 items-center gap-2">
                                 <span className="font-medium">{money(r.cost)}</span>
                                 <span className="no-print"><RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} /></span>
                               </span>
                             </div>
-                            {r.description && (
-                              <div className="mt-1 break-words rounded-md border border-ink/10 bg-white px-2 py-1.5 text-ink/80">
-                                {r.description}
-                              </div>
-                            )}
                           </div>
                         ))}
                       </div>
@@ -1137,7 +1141,7 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
             </div>
           ))}
         </div>
-            </section>
+      </section>
 
       {/* A4 PRINT REPORT — invisible on screen, shown only while printing */}
       {printCat && (() => {
@@ -1157,17 +1161,17 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
               </div>
             </div>
             {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
-                    <div key={supName} className="rounded-md bg-paper p-2.5">
-                      <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold">{supName}</p>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
-                          <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printSupplier(catName, supName)}
-                            aria-label={`Print ${supName} report`} title="Print A4 report for this supplier">
-                            <Printer size={14} />
-                          </button>
-                        </div>
-                      </div>
+              <div key={supName} className="rounded-md bg-paper p-2.5">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold">{supName}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
+                    <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printSupplier(name, supName)}
+                      aria-label={`Print ${supName} report`} title="Print A4 report for this supplier">
+                      <Printer size={14} />
+                    </button>
+                  </div>
+                </div>
                 <table className="w-full text-left text-sm">
                   <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="py-1 text-right">Amount</th></tr></thead>
                   <tbody>
@@ -1218,10 +1222,11 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
         )
       })()}
 
+      {/* FULL FORM (+ CREATE / edit) — closes only with the × icon or Cancel */}
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
-          <form role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
-            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+          <form role="dialog" aria-modal="true" onSubmit={submit} noValidate
+            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 [scrollbar-gutter:stable] sm:rounded-xl">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold uppercase">{editing ? 'Edit payment' : 'New payment'}</h2>
               <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
@@ -1265,17 +1270,19 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
               </div>
             )}
 
-          <label className="block text-sm font-medium">Amount paid
+            <label className="block text-sm font-medium">Amount paid
               <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.cost}
                 onChange={e => setF({ ...f, cost: e.target.value })} required /></label>
-            <label className="block text-sm font-medium">Description <span className="font-normal text-ink/60">(optional)</span>
-              <input className="input mt-1" maxLength={300} placeholder="e.g. Cement for foundation" value={f.description}
-                onChange={e => setF({ ...f, description: e.target.value })} /></label>
-            <label className="block text-sm font-medium">Date <span className="font-normal text-ink/60">(leave as today, or pick a past date)</span>
-              <input className="input mt-1" type="date" max={todayStr} value={f.expense_date}
-                onChange={e => setF({ ...f, expense_date: e.target.value })} /></label>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="block min-w-[10rem] flex-1 text-sm font-medium">Description <span className="font-normal text-ink/60">(optional)</span>
+                <input className="input mt-1" maxLength={300} placeholder="e.g. Cement" value={f.description}
+                  onChange={e => setF({ ...f, description: e.target.value })} /></label>
+              <label className="block text-sm font-medium">Date
+                <input className="input mt-1 !w-auto" type="date" max={todayStr} value={f.expense_date}
+                  onChange={e => setF({ ...f, expense_date: e.target.value })} /></label>
+            </div>
             <Notice m={msg} />
-                        <div className="flex gap-2">
+            <div className="flex gap-2">
               <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
               <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save'}</button>
             </div>
@@ -1283,45 +1290,64 @@ const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longP
         </div>
       )}
 
+      {/* QUICK PAYMENT (+ ADD PAYMENT / long press) — closes only with the × icon or Cancel */}
       {quick && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setQuick(null)}>
-          <form role="dialog" aria-modal="true" aria-label="Quick payment" onClick={e => e.stopPropagation()} onSubmit={submitQuick} noValidate
-            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+          <form role="dialog" aria-modal="true" aria-label="Quick payment" onSubmit={submitQuick} noValidate
+            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 [scrollbar-gutter:stable] sm:rounded-xl">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="font-semibold uppercase">Quick payment</h2>
-                {!quick.pick && <p className="text-xs text-ink/60">{quick.supplierName} · {quick.categoryName}</p>}
+                {quick.supplierName && <p className="text-xs text-ink/60">{quick.supplierName} · {quick.categoryName}</p>}
               </div>
               <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setQuick(null)} aria-label="Close">×</button>
             </div>
-            <label className="block text-sm font-medium">Amount paid
 
             {quick.pick && (
-              <>
-                <label className="block text-sm font-medium">Category
-                  <select className="input mt-1" value={quick.categoryId}
-                    onChange={e => setQuick(q => ({ ...q, categoryId: e.target.value, supplierId: '' }))}>
-                    <option value="">Choose category…</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </label>
-                <label className="block text-sm font-medium">Supplier / worker
-                  <select className="input mt-1" disabled={!quick.categoryId} value={quick.supplierId}
-                    onChange={e => setQuick(q => ({ ...q, supplierId: e.target.value }))}>
-                    <option value="">{quick.categoryId ? 'Choose supplier…' : 'Choose a category first'}</option>
-                    {suppliers.filter(s => String(s.category_id) === String(quick.categoryId)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </label>
-              </>
+              <div className="text-sm font-medium">Supplier / worker
+                <input className="input mt-1" placeholder="Search supplier / worker…" value={quickSupSearch} autoFocus
+                  onFocus={() => setSupListOpen(true)}
+                  onChange={e => {
+                    setQuickSupSearch(e.target.value); setSupListOpen(true)
+                    setQuick(q => ({ ...q, supplierId: '', supplierName: '', categoryName: '' }))
+                  }} />
+                {supListOpen && (
+                  <ul className="mt-1 max-h-48 overflow-y-auto rounded-md border border-ink/10 bg-white">
+                    {suppliers
+                      .filter(s => s.name.toLowerCase().includes(quickSupSearch.trim().toLowerCase()))
+                      .map(s => {
+                        const catName = categories.find(c => c.id === s.category_id)?.name || ''
+                        return (
+                          <li key={s.id}>
+                            <button type="button" className="block w-full px-3 py-2 text-left font-normal hover:bg-ink/5"
+                              onClick={() => {
+                                setQuick(q => ({ ...q, supplierId: s.id, supplierName: s.name, categoryName: catName }))
+                                setQuickSupSearch(s.name); setSupListOpen(false)
+                              }}>
+                              <span className="block">{s.name}</span>
+                              <span className="block text-xs text-ink/60">{catName}</span>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    {!suppliers.some(s => s.name.toLowerCase().includes(quickSupSearch.trim().toLowerCase())) && (
+                      <li className="px-3 py-2 font-normal text-ink/60">No match</li>
+                    )}
+                  </ul>
+                )}
+              </div>
             )}
+            <label className="block text-sm font-medium">Amount paid
               <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={quickCost}
                 onChange={e => setQuickCost(e.target.value)} required autoFocus={!quick.pick} /></label>
-            <label className="block text-sm font-medium">Description <span className="font-normal text-ink/60">(optional)</span>
-              <input className="input mt-1" maxLength={300} placeholder="e.g. Cement for foundation" value={quickDesc}
-                onChange={e => setQuickDesc(e.target.value)} /></label>
-            <label className="block text-sm font-medium">Date <span className="font-normal text-ink/60">(leave as today, or pick a past date)</span>
-              <input className="input mt-1" type="date" max={todayStr} value={quickDate}
-                onChange={e => setQuickDate(e.target.value)} /></label>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="block min-w-[10rem] flex-1 text-sm font-medium">Description <span className="font-normal text-ink/60">(optional)</span>
+                <input className="input mt-1" maxLength={300} placeholder="e.g. Cement" value={quickDesc}
+                  onChange={e => setQuickDesc(e.target.value)} /></label>
+              <label className="block text-sm font-medium">Date
+                <input className="input mt-1 !w-auto" type="date" max={todayStr} value={quickDate}
+                  onChange={e => setQuickDate(e.target.value)} /></label>
+            </div>
             <Notice m={quickMsg} />
             <div className="flex gap-2">
               <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setQuick(null)}>Cancel</button>

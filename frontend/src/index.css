@@ -46,4 +46,4 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
 
 input, select, textarea { font-size: 16px; }
 
-html { touch-action: manipulation; }
+html { touch-action: manipulation; scrollbar-gutter: stable; overflow-y: scroll; }
