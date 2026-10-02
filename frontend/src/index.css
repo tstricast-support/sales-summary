@@ -26,7 +26,7 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
 .mini-cal .react-calendar__tile--active.has-rec::after { background: #5eead4; }
 
 @media print {
-  @page { size: A4; margin: 14mm; }
+  @page { size: A4; margin: 0; }
   body.printing-log * { visibility: hidden; }
   body.printing-log .log-area, body.printing-log .log-area * { visibility: visible; }
   body.printing-log .log-area { position: absolute; left: 0; top: 0; width: 100%; }
@@ -36,6 +36,8 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
   body.printing-supplier * { visibility: hidden; }
   body.printing-supplier .sup-print-area, body.printing-supplier .sup-print-area * { visibility: visible; }
   body.printing-supplier .sup-print-area { display: block; position: absolute; left: 0; top: 0; width: 100%; }
+  .cat-print-area, .sup-print-area { padding: 14mm !important; }
+  .print-overlay { position: static !important; overflow: visible !important; background: transparent !important; }
   .no-print { display: none !important; }
 }
 .cat-print-area { display: none; }

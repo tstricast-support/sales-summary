@@ -459,7 +459,7 @@ useEffect(() => {
 
       {/* +ENTRY POPUP */}
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
+                <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
           <form role="dialog" aria-modal="true" aria-label="New entry" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
             className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
             <div className="flex items-center justify-between">
@@ -813,7 +813,7 @@ function DamagePage() {
         )}
 
         {open && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setOpen(false)}>
+                    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
             <form role="dialog" aria-modal="true" aria-label="Add damage entry" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
               className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
               <div className="flex items-center justify-between">
@@ -972,22 +972,17 @@ function ProjectsPage() {
   // const grandTotal = rows.reduce((t, r) => t + Number(r.cost), 0)
   const toggleCat = name => setCollapsed(c => ({ ...c, [name]: !c[name] }))
 
-  const printCategory = catName => {
-    setPrintCat(catName)
-    setTimeout(() => {
-      document.body.classList.add('printing-category')
-      window.onafterprint = () => { document.body.classList.remove('printing-category'); setPrintCat(null) }
-      window.print()
-    }, 150)
-  }
-
-  const printSupplier = (catName, supName) => {
-    setPrintSup({ cat: catName, sup: supName })
-    setTimeout(() => {
-      document.body.classList.add('printing-supplier')
-      window.onafterprint = () => { document.body.classList.remove('printing-supplier'); setPrintSup(null) }
-      window.print()
-    }, 150)
+  // the printer icons now open an in-app preview (with Print + Close buttons)
+  const printCategory = catName => { setPrintSup(null); setPrintCat(catName) }
+  const printSupplier = (catName, supName) => { setPrintCat(null); setPrintSup({ cat: catName, sup: supName }) }
+  const closePreview = () => { setPrintCat(null); setPrintSup(null) }
+  const doPrint = () => {
+    const cls = printCat ? 'printing-category' : 'printing-supplier'
+    const oldTitle = document.title
+    document.title = ' ' // keeps the page title ("Summary") out of the printed header
+    document.body.classList.add(cls)
+    window.onafterprint = () => { document.body.classList.remove(cls); document.title = oldTitle; window.onafterprint = null }
+    window.print()
   }
 
   const togglePie = catName => {
@@ -1116,17 +1111,17 @@ function ProjectsPage() {
                       </div>
                       <div className="space-y-2">
                         {sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date) || a.id - b.id).map(r => (
-                          <div key={r.id} className="border-b border-ink/5 pb-2 last:border-0 last:pb-0">
+                          <div key={r.id} className="border-b border-ink/5 pb-2 text-sm last:border-0 last:pb-0">
                             <div className="flex items-start justify-between gap-2">
-                              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                                <span className="whitespace-nowrap text-ink/70">{sriDate(r.expense_date)}</span>
+                              <div className="flex min-w-0 flex-1 items-start gap-2">
+                                <span className="shrink-0 whitespace-nowrap py-1 text-ink/70">{sriDate(r.expense_date)}</span>
                                 {r.description && (
-                                  <span className="max-w-full break-words rounded-md border border-ink/10 bg-white px-2 py-1 text-ink/80">
+                                  <span className="min-w-0 flex-1 rounded-md border border-ink/10 bg-white px-2 py-1 text-[13px] leading-snug text-ink/80 [overflow-wrap:anywhere]">
                                     {r.description}
                                   </span>
                                 )}
                               </div>
-                              <span className="flex shrink-0 items-center gap-2">
+                              <span className="flex shrink-0 items-center gap-2 py-1">
                                 <span className="font-medium">{money(r.cost)}</span>
                                 <span className="no-print"><RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} /></span>
                               </span>
@@ -1143,84 +1138,97 @@ function ProjectsPage() {
         </div>
       </section>
 
-      {/* A4 PRINT REPORT — invisible on screen, shown only while printing */}
-      {printCat && (() => {
-        const entry = grouped.find(([name]) => name === printCat)
-        if (!entry) return null
-        const [name, cat] = entry
-        return (
-          <div className="cat-print-area p-6">
-            <div className="mb-4 flex items-center justify-between border-b border-ink/20 pb-3">
-              <div>
-                <h1 className="text-xl font-bold uppercase">{name}</h1>
-                <p className="text-sm text-ink/60">Project Expense Report</p>
-              </div>
-              <div className="text-right text-sm text-ink/60">
-                <p>Generated {sriDate(todayStr)}</p>
-                <p className="font-semibold text-ink">Total: {money(cat.total)}</p>
-              </div>
+      {/* PRINT PREVIEW — on screen it shows the report with Print + Close; only the report itself is printed */}
+      {(printCat || printSup) && (
+        <div className="print-overlay fixed inset-0 z-[60] overflow-y-auto bg-white">
+          <div className="no-print sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-ink/10 bg-white px-4 py-3">
+            <h2 className="font-semibold uppercase">Print preview</h2>
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn" onClick={doPrint}><Printer size={16} />Print</button>
+              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={closePreview} aria-label="Close preview">×</button>
             </div>
-            {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
-              <div key={supName} className="rounded-md bg-paper p-2.5">
-                <div className="mb-1.5 flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold">{supName}</p>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
-                    <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printSupplier(name, supName)}
-                      aria-label={`Print ${supName} report`} title="Print A4 report for this supplier">
-                      <Printer size={14} />
-                    </button>
+          </div>
+
+          {printCat && (() => {
+            const entry = grouped.find(([name]) => name === printCat)
+            if (!entry) return null
+            const [name, cat] = entry
+            return (
+              <div className="cat-print-area p-6">
+                <div className="mb-4 flex items-center justify-between border-b border-ink/20 pb-3">
+                  <div>
+                    <h1 className="text-xl font-bold uppercase">{name}</h1>
+                    <p className="text-sm text-ink/60">Project Expense Report</p>
+                  </div>
+                  <div className="text-right text-sm text-ink/60">
+                    <p>Generated {sriDate(todayStr)}</p>
+                    <p className="font-semibold text-ink">Total: {money(cat.total)}</p>
+                  </div>
+                </div>
+                {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
+                  <div key={supName} className="mb-4 rounded-md bg-paper p-2.5">
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold">{supName}</p>
+                      <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
+                    </div>
+                    <table className="w-full text-left text-sm">
+                      <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="px-2 py-1">Description</th><th className="py-1 text-right">Amount</th></tr></thead>
+                      <tbody>
+                        {sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date) || a.id - b.id).map(r => (
+                          <tr key={r.id} className="align-top">
+                            <td className="whitespace-nowrap py-0.5">{sriDate(r.expense_date)}</td>
+                            <td className="px-2 py-0.5 text-ink/80 [overflow-wrap:anywhere]">{r.description || ''}</td>
+                            <td className="whitespace-nowrap py-0.5 text-right">{money(r.cost)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+                <div className="mt-4 flex justify-end border-t border-ink/20 pt-2 text-base font-bold">
+                  <p>Grand Total: {money(cat.total)}</p>
+                </div>
+              </div>
+            )
+          })()}
+
+          {printSup && (() => {
+            const entry = grouped.find(([name]) => name === printSup.cat)
+            const sup = entry && entry[1].suppliers.get(printSup.sup)
+            if (!sup) return null
+            const entries = sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date) || a.id - b.id)
+            return (
+              <div className="sup-print-area p-6">
+                <div className="mb-4 flex items-center justify-between border-b border-ink/20 pb-3">
+                  <div>
+                    <h1 className="text-xl font-bold uppercase">{printSup.sup}</h1>
+                    <p className="text-sm text-ink/60">{printSup.cat} · Project Expense Report</p>
+                  </div>
+                  <div className="text-right text-sm text-ink/60">
+                    <p>Generated {sriDate(todayStr)}</p>
+                    <p className="font-semibold text-ink">Total: {money(sup.total)}</p>
                   </div>
                 </div>
                 <table className="w-full text-left text-sm">
-                  <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="py-1 text-right">Amount</th></tr></thead>
+                  <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="px-2 py-1">Description</th><th className="py-1 text-right">Amount</th></tr></thead>
                   <tbody>
-                    {sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date)).map(r => (
-                      <tr key={r.id}><td className="py-0.5">{sriDate(r.expense_date)}</td><td className="py-0.5 text-right">{money(r.cost)}</td></tr>
+                    {entries.map(r => (
+                      <tr key={r.id} className="align-top">
+                        <td className="whitespace-nowrap py-0.5">{sriDate(r.expense_date)}</td>
+                        <td className="px-2 py-0.5 text-ink/80 [overflow-wrap:anywhere]">{r.description || ''}</td>
+                        <td className="whitespace-nowrap py-0.5 text-right">{money(r.cost)}</td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
+                <div className="mt-4 flex justify-end border-t border-ink/20 pt-2 text-base font-bold">
+                  <p>Total: {money(sup.total)}</p>
+                </div>
               </div>
-            ))}
-            <div className="mt-4 flex justify-end border-t border-ink/20 pt-2 text-base font-bold">
-              <p>Grand Total: {money(cat.total)}</p>
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* A4 PRINT REPORT — single supplier — invisible on screen, shown only while printing */}
-      {printSup && (() => {
-        const entry = grouped.find(([name]) => name === printSup.cat)
-        const sup = entry && entry[1].suppliers.get(printSup.sup)
-        if (!sup) return null
-        const entries = sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date))
-        return (
-          <div className="sup-print-area p-6">
-            <div className="mb-4 flex items-center justify-between border-b border-ink/20 pb-3">
-              <div>
-                <h1 className="text-xl font-bold uppercase">{printSup.sup}</h1>
-                <p className="text-sm text-ink/60">{printSup.cat} · Project Expense Report</p>
-              </div>
-              <div className="text-right text-sm text-ink/60">
-                <p>Generated {sriDate(todayStr)}</p>
-                <p className="font-semibold text-ink">Total: {money(sup.total)}</p>
-              </div>
-            </div>
-            <table className="w-full text-left text-sm">
-              <thead><tr className="text-xs uppercase text-ink/60"><th className="py-1">Date</th><th className="py-1 text-right">Amount</th></tr></thead>
-              <tbody>
-                {entries.map(r => (
-                  <tr key={r.id}><td className="py-0.5">{sriDate(r.expense_date)}</td><td className="py-0.5 text-right">{money(r.cost)}</td></tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="mt-4 flex justify-end border-t border-ink/20 pt-2 text-base font-bold">
-              <p>Total: {money(sup.total)}</p>
-            </div>
-          </div>
-        )
-      })()}
+            )
+          })()}
+        </div>
+      )}
 
       {/* FULL FORM (+ CREATE / edit) — closes only with the × icon or Cancel */}
       {open && (
