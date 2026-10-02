@@ -1,4 +1,4 @@
-const CACHE = 'summary-v2'
+const CACHE = 'summary-v3'
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll([
     '/', '/manifest.json', '/icon.svg',
@@ -19,8 +19,8 @@ self.addEventListener('push', e => {
   const data = e.data ? e.data.json() : {}
   e.waitUntil(self.registration.showNotification(data.title || 'New update', {
     body: data.body || '',
-    icon: '/icon.svg',
-    badge: '/icon.svg',
+    icon: '/icon-192.png',
+    badge: '/badge-96.png',
     data: { url: data.url || '/' },
   }))
 })

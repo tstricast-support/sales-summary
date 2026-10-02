@@ -23,4 +23,15 @@ def notify_admins(db, title: str, body: str, url: str = "/"):
         except WebPushException as e:
             if e.response is not None and e.response.status_code in (404, 410):
                 db.delete(sub)  # the browser revoked/expired this subscription
+        except Exception as e:
+            print("push failed for one device:", e)  # one bad device must not stop the others
     db.commit()
+
+
+def safe_notify(db, title: str, body: str, url: str = "/"):
+    """Never let a notification problem break saving data."""
+    try:
+        notify_admins(db, title, body, url)
+    except Exception as e:
+        print("push failed:", e)
+        db.rollback()

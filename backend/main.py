@@ -68,7 +68,7 @@ def save_record(data: schemas.RecordIn, db: Session = Depends(get_db)):
     try:
         rec = crud.upsert_record(db, data)
         page = PAGE_FOR_SLUG.get(rec.department.slug, rec.department.slug)
-        notify.notify_admins(
+        notify.safe_notify(
             db,
             title=f"{rec.department.name} — daily update",
             body=f"Sales {rec.sales_amount} / Collection {rec.collection_amount} — {rec.submitted_by}",
@@ -85,40 +85,19 @@ def damages(db: Session = Depends(get_db)):
 
 @app.post("/api/damages", response_model=schemas.DamageOut)
 def add_damage(data: schemas.DamageIn, db: Session = Depends(get_db)):
-    return crud.add_damage(db, data)
+    rec = crud.add_damage(db, data)
+    notify.safe_notify(
+        db,
+        title="Damage entry added",
+        body=f"Printing {data.printing_damage} / Accubind {data.accubind_damage} / Binding {data.binding_damage} — {data.submitted_by}",
+        url="/department/i-photobook-damage",
+    )
+    return rec
 
 def check_edit_window(created_at):
     if created_at and (datetime.now(timezone.utc) - created_at.replace(tzinfo=timezone.utc)).total_seconds() > 86400:
         raise HTTPException(403, "This entry is more than 24 hours old and can no longer be edited or deleted here.")
 
-
-@app.put("/api/damages/{damage_id}", response_model=schemas.DamageOut)
-def edit_damage(damage_id: int, data: schemas.DamageIn, db: Session = Depends(get_db)):
-    rec = db.query(models.DamageRecord).get(damage_id)
-    if not rec:
-        raise HTTPException(404, "Damage entry not found")
-    check_edit_window(rec.created_at)
-    return crud.update_damage(db, damage_id, data)
-
-
-@app.delete("/api/damages/{damage_id}")
-def remove_damage(damage_id: int, db: Session = Depends(get_db)):
-    rec = db.query(models.DamageRecord).get(damage_id)
-    if not rec:
-        raise HTTPException(404, "Damage entry not found")
-    check_edit_window(rec.created_at)
-    crud.delete_damage(db, damage_id)
-    return {"ok": True}
-
-
-@app.delete("/api/records/{record_id}")
-def remove_record(record_id: int, db: Session = Depends(get_db)):
-    rec = db.query(models.DailyRecord).get(record_id)
-    if not rec:
-        raise HTTPException(404, "Record not found")
-    check_edit_window(rec.created_at)
-    crud.delete_record(db, record_id)
-    return {"ok": True}
 
 @app.get("/api/push/public-key")
 def push_public_key():
@@ -270,7 +249,17 @@ def remove_project(project_id: int, db: Session = Depends(get_db)):
 @app.post("/api/records/bulk")
 def save_bulk(data: schemas.BulkIn, db: Session = Depends(get_db)):
     try:
-        return {"days": crud.bulk_upsert(db, data)}
+        days = crud.bulk_upsert(db, data)
+        dept = db.query(models.Department).filter_by(slug=data.department_slug).first()
+        page = PAGE_FOR_SLUG.get(data.department_slug, data.department_slug)
+        period = f"{data.year}-{data.month:02d}" if data.month else str(data.year)
+        notify.safe_notify(
+            db,
+            title=f"{dept.name} — {period} update",
+            body=f"Sales {data.sales_amount:,.2f} / Collection {data.collection_amount:,.2f} — {data.submitted_by}",
+            url=f"/department/{page}?tab={data.department_slug}&admin=1",
+        )
+        return {"days": days}
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
