@@ -52,6 +52,8 @@ class DamageRecord(Base):
     printing_damage = Column(Numeric(14, 2), nullable=False, default=0)
     accubind_damage = Column(Numeric(14, 2), nullable=False, default=0)
     binding_damage = Column(Numeric(14, 2), nullable=False, default=0)
+    department_slug = Column(String(50), nullable=False, default="i-photobook", server_default="i-photobook")
+    damage_value = Column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     submitted_by = Column(String(60), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -1,4 +1,4 @@
-import io, os
+import io,os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
@@ -29,6 +29,7 @@ async def lifespan(app):
         crud.seed_departments(db)
         crud.migrate_projects(db)
         crud.migrate_audit_logs(db)
+        crud.migrate_damages(db)
     yield
 
 
@@ -79,8 +80,8 @@ def save_record(data: schemas.RecordIn, db: Session = Depends(get_db)):
         raise HTTPException(404, str(e))
     
 @app.get("/api/damages", response_model=list[schemas.DamageOut])
-def damages(db: Session = Depends(get_db)):
-    return crud.list_damages(db)
+def damages(department: str | None = None, db: Session = Depends(get_db)):
+    return crud.list_damages(db, department)
 
 
 @app.post("/api/damages", response_model=schemas.DamageOut)
@@ -88,9 +89,10 @@ def add_damage(data: schemas.DamageIn, db: Session = Depends(get_db)):
     rec = crud.add_damage(db, data)
     notify.safe_notify(
         db,
-        title="Damage entry added",
-        body=f"Printing {data.printing_damage} / Accubind {data.accubind_damage} / Binding {data.binding_damage} — {data.submitted_by}",
-        url="/department/i-photobook-damage",
+        title=f"{data.department_slug.replace('-', ' ').upper()} — damage entry added",
+        body=(f"Printing {data.printing_damage} / Accubind {data.accubind_damage} / Binding {data.binding_damage} — {data.submitted_by}"
+              if data.department_slug == "i-photobook" else f"Damage {data.damage_value} — {data.submitted_by}"),
+        url=f"/department/{data.department_slug}-damage?admin=1",
     )
     return rec
 

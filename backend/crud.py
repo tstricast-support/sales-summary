@@ -99,15 +99,19 @@ def audit(db, start, end, slug=None):
             for a in q.order_by(A.timestamp.desc()).limit(500).all()]
 
 def add_damage(db, d: schemas.DamageIn):
-    rec = models.DamageRecord(record_date=d.record_date, printing_damage=d.printing_damage,
+    rec = models.DamageRecord(record_date=d.record_date, department_slug=d.department_slug,
+                              printing_damage=d.printing_damage,
                               accubind_damage=d.accubind_damage, binding_damage=d.binding_damage,
-                              submitted_by=d.submitted_by)
+                              damage_value=d.damage_value, submitted_by=d.submitted_by)
     db.add(rec); db.commit(); db.refresh(rec)
     return rec
 
 
-def list_damages(db, limit=300):
-    return (db.query(models.DamageRecord)
+def list_damages(db, department=None, limit=1000):
+    q = db.query(models.DamageRecord)
+    if department:
+        q = q.filter(models.DamageRecord.department_slug == department)
+    return (q
             .order_by(models.DamageRecord.record_date.desc(), models.DamageRecord.id.desc())
             .limit(limit).all())
 
@@ -117,9 +121,24 @@ def update_damage(db, damage_id: int, d: schemas.DamageIn):
         raise LookupError("Damage entry not found")
     rec.record_date, rec.printing_damage = d.record_date, d.printing_damage
     rec.accubind_damage, rec.binding_damage, rec.submitted_by = d.accubind_damage, d.binding_damage, d.submitted_by
+    rec.damage_value = d.damage_value
     db.commit(); db.refresh(rec)
     return rec
 
+
+def migrate_damages(db):
+    """Adds department_slug / damage_value to the old damage_records table.
+    Existing rows become I Photobook rows. Safe to run on every startup."""
+    insp = inspect(db.get_bind())
+    if "damage_records" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("damage_records")}
+    if "department_slug" not in cols:
+        db.execute(text("ALTER TABLE damage_records ADD COLUMN department_slug VARCHAR(50) NOT NULL DEFAULT 'i-photobook'"))
+    if "damage_value" not in cols:
+        db.execute(text("ALTER TABLE damage_records ADD COLUMN damage_value NUMERIC(14,2) NOT NULL DEFAULT 0"))
+    db.commit()
+    
 
 def delete_damage(db, damage_id: int):
     rec = db.query(models.DamageRecord).get(damage_id)

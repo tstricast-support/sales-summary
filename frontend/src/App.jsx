@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation,useNavigate } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
 import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp } from 'lucide-react'
 import Calendar from 'react-calendar'
@@ -22,6 +22,14 @@ const PAGES = {
   'i-lab-std': { title: 'I Lab STD', slugs: ['i-lab-std'] },
   tricast: { title: 'Tricast Holding', slugs: ['tricast'] },
 }
+
+// departments that have a damage log (admin sees them as cards on the DAMAGES page)
+const DAMAGE_DEPTS = [
+  { slug: 'dd-engineering', name: 'DD ENGINEERING', path: '/department/dd-engineering-damage', back: 'dd-engineering' },
+  { slug: 'i-lab-std', name: 'I LAB STD', path: '/department/i-lab-std-damage', back: 'i-lab-std' },
+  { slug: 'i-photobook', name: 'I PHOTOBOOK', path: '/department/i-photobook-damage' },
+]
+
 const deptName = s => DEPTS.find(d => d.slug === s)?.name || s
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -548,7 +556,12 @@ function DepartmentPage({ page }) {
           {slugs.map(s => <Logo key={s} slug={s} className="h-14 w-14 sm:h-16 sm:w-16" />)}
           <h1 className="text-2xl font-bold sm:text-3xl">{title}</h1>
         </div>
-        <button className="btn" onClick={() => entryRef.current?.()}>+ ENTRY</button>
+        <div className="flex items-center gap-2">
+          {['dd-engineering', 'i-lab-std'].includes(tab) && (
+            <Link to={`/department/${tab}-damage`} state={{ admin: fromAdmin, add: true }} className="btn-ghost !px-4 !py-2 !text-base">+ ADD DAMAGE</Link>
+          )}
+          <button className="btn" onClick={() => entryRef.current?.()}>+ ENTRY</button>
+        </div>
       </header>
       <div ref={setTotalsSlot} className="flex w-full justify-end" />
       {slugs.length > 1 && (
@@ -589,10 +602,25 @@ function RowMenu({ onEdit, onDelete }) {
   )
 }
 
-function DamagePage() {
-  const fromAdmin = useLocation().state?.admin
+function DamagePage({ slug }) {
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const [sp] = useSearchParams()
+  const fromAdmin = loc.state?.admin || sp.get('admin') === '1'
+  const dept = DAMAGE_DEPTS.find(d => d.slug === slug)
+  const isPhoto = slug === 'i-photobook'
+  // chart / table columns: photobook has 3 damage types, the other departments have a single value
+  const series = isPhoto
+    ? [{ key: 'Printing', field: 'printing_damage', color: '#0f766e' },
+       { key: 'Accubind', field: 'accubind_damage', color: '#c2410c' },
+       { key: 'Binding', field: 'binding_damage', color: '#7c3aed' }]
+    : [{ key: 'Damage', field: 'damage_value', color: '#dc2626' }]
   const todayStr = iso(new Date())
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(() => !!loc.state?.add)
+  // the "+ ADD DAMAGE" button on the department page opens the form straight away; clear the flag so a refresh doesn't reopen it
+  useEffect(() => {
+    if (loc.state?.add) navigate(loc.pathname + loc.search, { replace: true, state: { ...loc.state, add: false } })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [showGraph, setShowGraph] = useState(false)
   const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 640px)').matches)
   useEffect(() => {
@@ -618,23 +646,23 @@ function DamagePage() {
   const seg = on => `rounded-md border px-3 py-1.5 text-sm font-medium ${on ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`
   const [editing, setEditing] = useState(null)
   const [date, setDate] = useState(todayStr)
-  const [rows, setRows] = useState(() => store.get('damages', []))
-  const [f, setF] = useState({ printing: '', accubind: '', binding: '', by: localStorage.getItem('by') || '' })
+  const [rows, setRows] = useState(() => store.get('damages:' + slug, []))
+  const [f, setF] = useState({ printing: '', accubind: '', binding: '', value: '', by: localStorage.getItem('by') || '' })
   const [msg, setMsg] = useState(null)
   const [toast, setToast] = useState(null)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
-      const data = await (await call('/api/damages')).json()
-      setRows(data); store.set('damages', data)
+      const data = await (await call(`/api/damages?department=${slug}`)).json()
+      setRows(data); store.set('damages:' + slug, data)
     } catch { /* offline: keep cached history */ }
-  }, [])
+  }, [slug])
   useEffect(() => { refresh() }, [refresh])
 
   const openEdit = r => {
     setEditing(r); setDate(r.record_date)
-    setF({ printing: String(r.printing_damage), accubind: String(r.accubind_damage), binding: String(r.binding_damage), by: r.submitted_by })
+    setF({ printing: String(r.printing_damage), accubind: String(r.accubind_damage), binding: String(r.binding_damage), value: String(r.damage_value), by: r.submitted_by })
     setMsg(null); setOpen(true)
   }
   const graphRange = (() => {
@@ -656,20 +684,16 @@ function DamagePage() {
       const m = {}
       filteredRows.forEach(r => {
         const k = r.record_date.slice(0, 7)
-        m[k] = m[k] || { date: k, Printing: 0, Accubind: 0, Binding: 0 }
-        m[k].Printing += Number(r.printing_damage); m[k].Accubind += Number(r.accubind_damage); m[k].Binding += Number(r.binding_damage)
+        m[k] = m[k] || { date: k, ...Object.fromEntries(series.map(s => [s.key, 0])) }
+        series.forEach(s => { m[k][s.key] += Number(r[s.field]) })
       })
       return Object.values(m).sort((a, b) => a.date.localeCompare(b.date)).slice(-12)
     }
     return filteredRows.slice().sort((a, b) => a.record_date.localeCompare(b.record_date))
-      .map(r => ({ date: r.record_date.slice(5), Printing: Number(r.printing_damage), Accubind: Number(r.accubind_damage), Binding: Number(r.binding_damage) }))
+      .map(r => ({ date: r.record_date.slice(5), ...Object.fromEntries(series.map(s => [s.key, Number(r[s.field])])) }))
   })()
 
-  const pieData = [
-    { name: 'Printing', value: filteredRows.reduce((t, r) => t + Number(r.printing_damage), 0) },
-    { name: 'Accubind', value: filteredRows.reduce((t, r) => t + Number(r.accubind_damage), 0) },
-    { name: 'Binding', value: filteredRows.reduce((t, r) => t + Number(r.binding_damage), 0) },
-  ]
+  const pieData = series.map(s => ({ name: s.key, value: filteredRows.reduce((t, r) => t + Number(r[s.field]), 0) }))
   const removeDamage = async r => {
     if (!window.confirm(`Delete the damage entry for ${sriDate(r.record_date)}?`)) return
     try {
@@ -683,16 +707,22 @@ function DamagePage() {
     const by = f.by.trim().replace(/\s+/g, ' ')
     if (!NAME_RE.test(by)) return setMsg({ t: 'err', m: "Enter your name: 2–60 characters, letters, spaces, . ' or - only." })
     const p = parseFloat(f.printing) || 0, a = parseFloat(f.accubind) || 0, b = parseFloat(f.binding) || 0
-    if (p < 0 || a < 0 || b < 0) return setMsg({ t: 'err', m: 'Damage values must be 0 or more.' })
+    const v = parseFloat(f.value)
+    if (isPhoto && (p < 0 || a < 0 || b < 0)) return setMsg({ t: 'err', m: 'Damage values must be 0 or more.' })
+    if (!isPhoto && !(v >= 0)) return setMsg({ t: 'err', m: 'Enter the damage value (0 or more).' })
     if (!date || date > todayStr) return setMsg({ t: 'err', m: 'Choose a date that is today or earlier.' })
     localStorage.setItem('by', by)
-    const body = { record_date: date, printing_damage: p, accubind_damage: a, binding_damage: b, submitted_by: by }
+    const body = {
+      department_slug: slug, record_date: date,
+      printing_damage: isPhoto ? p : 0, accubind_damage: isPhoto ? a : 0, binding_damage: isPhoto ? b : 0,
+      damage_value: isPhoto ? 0 : v, submitted_by: by,
+    }
     setBusy(true)
     try {
       if (editing) await call(`/api/damages/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
       else await call('/api/damages', { method: 'POST', body: JSON.stringify(body) })
       setToast({ t: 'ok', m: `Damage entry saved for ${sriDate(date)}.` })
-      setOpen(false); setEditing(null); setF({ printing: '', accubind: '', binding: '', by })
+      setOpen(false); setEditing(null); setF({ printing: '', accubind: '', binding: '', value: '', by })
       await refresh()
     } catch (err) {
       if (err.status) setMsg({ t: 'err', m: err.message })
@@ -709,9 +739,14 @@ function DamagePage() {
     <>
       {fromAdmin && <AdminNav />}
       <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
+        {fromAdmin ? (
+          <Link to="/admin/damages" className="btn-ghost w-fit"><ArrowLeft size={16} />Back to damages</Link>
+        ) : dept?.back && (
+          <Link to={`/department/${dept.back}`} className="btn-ghost w-fit"><ArrowLeft size={16} />Back</Link>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl">
-            <Logo slug="i-photobook" className="h-8 w-8" />I Photobook — Damage Log
+            <Logo slug={slug} className="h-8 w-8" />{deptName(slug)} — Damage Log
           </h1>
           <div className="flex items-center gap-2">
             <div ref={chartRef} className="relative">
@@ -720,7 +755,7 @@ function DamagePage() {
               </button>
               {chartOpen && (
                 <div className="absolute left-0 z-20 mt-2 w-40 overflow-hidden rounded-md border border-ink/10 bg-white shadow-lg">
-                  {[['line', 'Line graph'], ['bar', 'Bar graph'], ['pie', 'Pie chart']].map(([k, l]) => (
+                  {[['line', 'Line graph'], ['bar', 'Bar graph'], ...(isPhoto ? [['pie', 'Pie chart']] : [])].map(([k, l]) => (
                     <button key={k}
                       className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-ink/5 ${chartType === k ? 'font-semibold text-ink' : 'text-ink/70'}`}
                       onClick={() => { setChartType(k); setChartOpen(false); setShowGraph(true) }}>{l}</button>
@@ -756,32 +791,32 @@ function DamagePage() {
           <div className="max-h-[70vh] overflow-auto">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-white"><tr className="border-b border-ink/10">
-                <th className="py-2">Date</th><th className="text-right">Printing</th><th className="text-right">Accubind</th><th className="text-right">Binding</th><th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
+                <th className="py-2">Date</th>
+                {series.map(s => <th key={s.key} className="text-right">{s.key}</th>)}
+                <th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
               <tbody>
                 {filteredRows.map(r => (
                   <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
                     <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
-                    <td className="text-right">{money(r.printing_damage)}</td>
-                    <td className="text-right">{money(r.accubind_damage)}</td>
-                    <td className="text-right">{money(r.binding_damage)}</td>
+                    {series.map(s => <td key={s.key} className="text-right">{money(r[s.field])}</td>)}
                     <td className="pl-4">{r.submitted_by}</td>
                     <td className="pl-2 text-right">
                       {(fromAdmin || within24h(r.created_at)) && <RowMenu onEdit={() => openEdit(r)} onDelete={() => removeDamage(r)} />}
                     </td>
                   </tr>
                 ))}
-                {!filteredRows.length && <tr><td colSpan={6} className="py-6 text-center text-ink/60">No damage entries in this period.</td></tr>}
+                {!filteredRows.length && <tr><td colSpan={series.length + 3} className="py-6 text-center text-ink/60">No damage entries in this period.</td></tr>}
               </tbody>
             </table>
           </div>
         </section>
-        
+
         {(isDesktop || showGraph) && (
           <section className="card">
             <h2 className="mb-3 font-semibold uppercase">Damage Trend – {rangeLabel}</h2>
             {filteredRows.length ? (
               <ResponsiveContainer width="100%" height={300}>
-                {chartType === 'pie' ? (
+                {chartType === 'pie' && isPhoto ? (
                   <RePieChart>
                     <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
                       {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
@@ -793,18 +828,14 @@ function DamagePage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="date" fontSize={12} /><YAxis fontSize={12} width={60} />
                     <Tooltip formatter={v => money(v)} /><Legend />
-                    <Bar dataKey="Printing" fill="#0f766e" />
-                    <Bar dataKey="Accubind" fill="#c2410c" />
-                    <Bar dataKey="Binding" fill="#7c3aed" />
+                    {series.map(s => <Bar key={s.key} dataKey={s.key} fill={s.color} />)}
                   </BarChart>
                 ) : (
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="date" fontSize={12} /><YAxis fontSize={12} width={60} />
                     <Tooltip formatter={v => money(v)} /><Legend />
-                    <Line type="monotone" dataKey="Printing" stroke="#0f766e" strokeWidth={2} dot={chartData.length < 15} />
-                    <Line type="monotone" dataKey="Accubind" stroke="#c2410c" strokeWidth={2} dot={chartData.length < 15} />
-                    <Line type="monotone" dataKey="Binding" stroke="#7c3aed" strokeWidth={2} dot={chartData.length < 15} />
+                    {series.map(s => <Line key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={2} dot={chartData.length < 15} />)}
                   </LineChart>
                 )}
               </ResponsiveContainer>
@@ -813,21 +844,28 @@ function DamagePage() {
         )}
 
         {open && (
-                    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
             <form role="dialog" aria-modal="true" aria-label="Add damage entry" onClick={e => e.stopPropagation()} onSubmit={submit} noValidate
               className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold uppercase">{editing ? 'Edit Damage Entry' : 'Add Damage Entry'}</h2>
+                <h2 className="font-semibold uppercase">{editing ? 'Edit Damage Entry' : 'Add Damage Entry'} – {deptName(slug)}</h2>
                 <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
               </div>
               <label className="block text-sm font-medium">Date
                 <input className="input mt-1" type="date" max={todayStr} value={date} onChange={e => setDate(e.target.value)} required /></label>
-              <label className="block text-sm font-medium">Printing damage
-                <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.printing} onChange={e => setF({ ...f, printing: e.target.value })} /></label>
-              <label className="block text-sm font-medium">Accubind damage
-                <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.accubind} onChange={e => setF({ ...f, accubind: e.target.value })} /></label>
-              <label className="block text-sm font-medium">Binding damage
-                <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.binding} onChange={e => setF({ ...f, binding: e.target.value })} /></label>
+              {isPhoto ? (
+                <>
+                  <label className="block text-sm font-medium">Printing damage
+                    <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.printing} onChange={e => setF({ ...f, printing: e.target.value })} /></label>
+                  <label className="block text-sm font-medium">Accubind damage
+                    <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.accubind} onChange={e => setF({ ...f, accubind: e.target.value })} /></label>
+                  <label className="block text-sm font-medium">Binding damage
+                    <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.binding} onChange={e => setF({ ...f, binding: e.target.value })} /></label>
+                </>
+              ) : (
+                <label className="block text-sm font-medium">Damage value
+                  <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.value} onChange={e => setF({ ...f, value: e.target.value })} required /></label>
+              )}
               <label className="block text-sm font-medium">Your name
                 <input className="input mt-1" value={f.by} maxLength={60} autoComplete="name" placeholder="e.g. Nimal Perera" onChange={e => setF({ ...f, by: e.target.value })} required /></label>
               <Notice m={msg} />
@@ -842,6 +880,45 @@ function DamagePage() {
     </>
   )
 }
+
+function DamagesHome() {
+  const [rows, setRows] = useState(() => store.get('damages:all', []))
+  useEffect(() => {
+    call('/api/damages').then(r => r.json()).then(d => { setRows(d); store.set('damages:all', d) }).catch(() => {})
+  }, [])
+  const month = iso(new Date()).slice(0, 7)
+  return (
+    <main className="mx-auto max-w-6xl p-4">
+      <h1 className="mb-3 text-xl font-bold sm:text-2xl">DAMAGES</h1>
+      <p className="mb-4 text-sm text-ink/60">This month · {month}. Tap a department to see its damages.</p>
+      <div className="space-y-3">
+        {DAMAGE_DEPTS.map(d => {
+          const mine = rows.filter(r => r.department_slug === d.slug && r.record_date.startsWith(month))
+          const total = mine.reduce((t, r) => t + (d.slug === 'i-photobook'
+            ? Number(r.printing_damage) + Number(r.accubind_damage) + Number(r.binding_damage)
+            : Number(r.damage_value)), 0)
+          return (
+            <Link key={d.slug} to={d.path} state={{ admin: true }} className="card flex items-center gap-4 hover:shadow-md">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-ink/10 bg-white p-1">
+                <Logo slug={d.slug} className="h-full w-full" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold">{d.name}</span>
+                <span className="mt-1 grid grid-cols-[140px_1fr] gap-y-0.5 text-sm">
+                  <span className="text-red-700">Damage {money(total)}</span>
+                  <span className="text-ink/60">{mine.length} entr{mine.length === 1 ? 'y' : 'ies'}</span>
+                </span>
+              </span>
+              <ChevronRight size={20} className="shrink-0 text-ink/40" />
+            </Link>
+          )
+        })}
+      </div>
+    </main>
+  )
+}
+
+
 function ProjectsPage() {
   const todayStr = iso(new Date())
   const emptyForm = { category_id: '', supplier_id: '', cost: '', expense_date: todayStr, description: '' }
@@ -1389,7 +1466,7 @@ function AdminNav() {
       <Link to="/admin/departments" className="mb-2 inline-block text-lg font-bold">Summary</Link>
       <div className="scrollbar-none flex gap-2 overflow-x-auto">
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
-        <NavLink to="/department/i-photobook-damage" state={{ admin: true }} className={link}>DAMAGES</NavLink>
+        <NavLink to="/admin/damages" className={link}>DAMAGES</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
         <NavLink to="/admin/dashboard" className={link}><Settings size={18} />MANAGE</NavLink>
         {!pushEnabled && (
@@ -1794,9 +1871,10 @@ useEffect(() => {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="departments" element={<Departments />} />
           <Route path="projects" element={<ProjectsPage />} />
+          <Route path="damages" element={<DamagesHome />} />
         </Route>
         {Object.keys(PAGES).map(p => <Route key={p} path={`/department/${p}`} element={<DepartmentPage page={p} />} />)}
-        <Route path="/department/i-photobook-damage" element={<DamagePage />} />
+        {DAMAGE_DEPTS.map(d => <Route key={d.slug} path={d.path} element={<DamagePage key={d.slug} slug={d.slug} />} />)}
         <Route path="*" element={<Navigate to="/admin/departments" replace />} />
       </Routes>
     </BrowserRouter>

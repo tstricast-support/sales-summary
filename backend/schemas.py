@@ -64,12 +64,24 @@ class BulkIn(BaseModel):
             raise ValueError("Name must be 2-60 characters: letters, spaces, . ' -")
         return v
 
+DAMAGE_DEPARTMENTS = {"i-photobook", "dd-engineering", "i-lab-std"}
+
+
 class DamageIn(BaseModel):
     record_date: date
-    printing_damage: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
-    accubind_damage: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
-    binding_damage: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    department_slug: str = "i-photobook"
+    printing_damage: Decimal = Field(default=0, ge=0, max_digits=14, decimal_places=2)
+    accubind_damage: Decimal = Field(default=0, ge=0, max_digits=14, decimal_places=2)
+    binding_damage: Decimal = Field(default=0, ge=0, max_digits=14, decimal_places=2)
+    damage_value: Decimal = Field(default=0, ge=0, max_digits=14, decimal_places=2)
     submitted_by: str
+
+    @field_validator("department_slug")
+    @classmethod
+    def valid_department(cls, v: str):
+        if v not in DAMAGE_DEPARTMENTS:
+            raise ValueError("Unknown department for damages")
+        return v
 
     @field_validator("submitted_by")
     @classmethod
@@ -91,9 +103,11 @@ class DamageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     record_date: date
+    department_slug: str
     printing_damage: float
     accubind_damage: float
     binding_damage: float
+    damage_value: float
     submitted_by: str
     created_at: datetime | None = None
 
