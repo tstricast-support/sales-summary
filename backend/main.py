@@ -1,4 +1,4 @@
-import io,os
+import asyncio, io, os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
@@ -11,6 +11,7 @@ import crud, models, schemas, notify
 from database import engine, Base, get_db, SessionLocal
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
+HR_KEY = os.getenv("HR_KEY", "")   # optional passcode for the HR cheque page; leave unset for no passcode
 
 # mirrors the frontend's PAGES grouping in App.jsx, just for building notification links
 PAGE_FOR_SLUG = {
@@ -22,6 +23,20 @@ PAGE_FOR_SLUG = {
 }
 
 
+def run_reminders():
+    with SessionLocal() as db:
+        crud.process_cheque_reminders(db)
+
+
+async def reminder_loop():
+    while True:
+        try:
+            await asyncio.to_thread(run_reminders)
+        except Exception as e:
+            print("reminder run failed:", e)
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app):
     Base.metadata.create_all(bind=engine)
@@ -30,7 +45,10 @@ async def lifespan(app):
         crud.migrate_projects(db)
         crud.migrate_audit_logs(db)
         crud.migrate_damages(db)
+        crud.migrate_hr(db)
+    reminder_task = asyncio.create_task(reminder_loop())
     yield
+    reminder_task.cancel()
 
 
 app = FastAPI(title="Summary API", lifespan=lifespan)
@@ -41,6 +59,13 @@ app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in os.getenv("
 def admin_only(x_admin_key: str = Header(default="")):
     if ADMIN_KEY and x_admin_key != ADMIN_KEY:
         raise HTTPException(401, "Admin key required")
+
+
+def hr_access(x_hr_key: str = Header(default=""), x_admin_key: str = Header(default="")):
+    """Cheque pages: open to admin and HR. If HR_KEY is set on the server, the HR passcode
+    (or the admin key, when one is set) is required; if HR_KEY is not set, no passcode is needed."""
+    if HR_KEY and x_hr_key != HR_KEY and not (ADMIN_KEY and x_admin_key == ADMIN_KEY):
+        raise HTTPException(401, "Passcode required")
 
 
 def check_range(start: date, end: date):
@@ -106,8 +131,13 @@ def push_public_key():
     return {"key": os.getenv("VAPID_PUBLIC_KEY", "")}
 
 
-@app.post("/api/push/subscribe", dependencies=[Depends(admin_only)])
-def push_subscribe(data: schemas.PushSubscriptionIn, db: Session = Depends(get_db)):
+@app.post("/api/push/subscribe")
+def push_subscribe(data: schemas.PushSubscriptionIn, db: Session = Depends(get_db),
+                   x_admin_key: str = Header(default=""), x_hr_key: str = Header(default="")):
+    if data.role == "hr":
+        hr_access(x_hr_key, x_admin_key)   # HR phones subscribe with the HR passcode (when one is set)
+    else:
+        admin_only(x_admin_key)
     crud.add_push_subscription(db, data)
     return {"status": "ok"}
 
@@ -303,3 +333,53 @@ def export(start: date, end: date, department: str | None = None, db: Session = 
     name = f"summary_{department or 'all'}_{start}_{end}.xlsx"
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# ───────────── Cheques (admin + HR) ─────────────
+@app.get("/api/cheques", response_model=list[schemas.ChequeOut], dependencies=[Depends(hr_access)])
+def cheques(db: Session = Depends(get_db)):
+    return crud.list_cheques(db)
+
+
+@app.post("/api/cheques", response_model=schemas.ChequeOut, dependencies=[Depends(hr_access)])
+def add_cheque(data: schemas.ChequeIn, db: Session = Depends(get_db)):
+    return crud.add_cheque(db, data)
+
+
+@app.put("/api/cheques/{cheque_id}", response_model=schemas.ChequeOut, dependencies=[Depends(hr_access)])
+def edit_cheque(cheque_id: int, data: schemas.ChequeIn, db: Session = Depends(get_db)):
+    try:
+        return crud.update_cheque(db, cheque_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/cheques/{cheque_id}/reschedule", response_model=schemas.ChequeOut, dependencies=[Depends(hr_access)])
+def reschedule_cheque(cheque_id: int, data: schemas.ChequeRescheduleIn, db: Session = Depends(get_db)):
+    try:
+        return crud.reschedule_cheque(db, cheque_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/cheques/{cheque_id}/status", response_model=schemas.ChequeOut, dependencies=[Depends(hr_access)])
+def cheque_status(cheque_id: int, data: schemas.ChequeStatusIn, db: Session = Depends(get_db)):
+    try:
+        return crud.set_cheque_status(db, cheque_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/api/cheques/{cheque_id}", dependencies=[Depends(hr_access)])
+def remove_cheque(cheque_id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_cheque(db, cheque_id)
+        return {"ok": True}
+    except LookupError as e:
+        raise HTTPException(404, str(e))

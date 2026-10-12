@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation,useNavigate } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp, FileText } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -30,6 +30,15 @@ const DAMAGE_DEPTS = [
   { slug: 'i-photobook', name: 'I PHOTOBOOK', path: '/department/i-photobook-damage' },
 ]
 
+// Date/time helpers — always Sri Lanka time (UTC+5:30), whatever the device clock says
+const LK_MS = 5.5 * 3600e3
+const toLkInput = isoStr => new Date(new Date(isoStr).getTime() + LK_MS).toISOString().slice(0, 16)   // -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local">
+const fromLkInput = v => new Date(v + ':00+05:30').toISOString()
+const nowLkInput = () => toLkInput(new Date().toISOString())
+const fmtDT = isoStr => new Date(isoStr).toLocaleString('en-GB', {
+  timeZone: 'Asia/Colombo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+})
+
 const deptName = s => DEPTS.find(d => d.slug === s)?.name || s
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -56,7 +65,7 @@ const rangeFor = kind => {
 async function call(path, opts = {}) {
   const res = await fetch(API + path, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', 'x-admin-key': localStorage.getItem('adminKey') || '', ...opts.headers },
+    headers: { 'Content-Type': 'application/json', 'x-admin-key': localStorage.getItem('adminKey') || '', 'x-hr-key': localStorage.getItem('hrKey') || '', ...opts.headers },
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -74,7 +83,7 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)))
 }
 
-async function enablePushNotifications() {
+async function enablePushNotifications(role = 'admin') {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     alert('Push notifications are not supported on this browser/device.')
     return false
@@ -91,7 +100,7 @@ async function enablePushNotifications() {
   const j = sub.toJSON()
   await call('/api/push/subscribe', {
     method: 'POST',
-    body: JSON.stringify({ endpoint: sub.endpoint, keys: j.keys }),
+    body: JSON.stringify({ endpoint: sub.endpoint, keys: j.keys, role }),
   })
   return true
 }
@@ -1477,6 +1486,363 @@ function ProjectsPage() {
   )
 }
 
+/* ───────────── Cheques (HR + admin) ───────────── */
+const todayLk = () => nowLkInput().slice(0, 10)
+const daysUntil = d => {
+  const [y, m, dd] = d.split('-').map(Number), [ty, tm, td] = todayLk().split('-').map(Number)
+  return Math.round((Date.UTC(y, m - 1, dd) - Date.UTC(ty, tm - 1, td)) / 86400000)
+}
+const weekday = d => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })
+
+const SLOT_LABEL = { MORNING: '10:00 AM', EVENING: '3:30 PM' }   // the two daily cheque release times
+const SLOT_HM = { MORNING: '10:00', EVENING: '15:30' }
+const SLOT_ORDER = { MORNING: 0, EVENING: 1 }
+
+// 3-dot menu: keeps the risky actions (edit / cancel / delete) out of the way so they are not tapped by mistake
+function ChequeMenu({ items }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const close = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [open])
+  return (
+    <span ref={ref} className="relative ml-auto inline-block">
+      <button type="button" className="rounded p-2 text-ink/60 hover:bg-ink/10 hover:text-ink" onClick={() => setOpen(o => !o)}
+        aria-label="More actions" aria-haspopup="true" aria-expanded={open}>
+        <MoreVertical size={18} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-md border border-ink/10 bg-white shadow-lg">
+          {items.map(it => (
+            <button key={it.label} type="button" onClick={() => { setOpen(false); it.onClick() }}
+              className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm ${it.danger ? 'border-t border-ink/10 text-red-600 hover:bg-red-50' : 'hover:bg-ink/5'}`}>
+              {it.icon}{it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  )
+}
+
+function ChequesPage({ standalone = false }) {
+  const blank = () => ({ payee_name: '', cheque_no: '', amount: '', cheque_date: todayLk(), release_slot: 'MORNING', remind_days_before: '1', remind_minutes_before: '15', note: '' })
+  const [rows, setRows] = useState([])
+  const [tab, setTab] = useState('PENDING')
+  const [by, setBy] = useState(() => localStorage.getItem('by') || '')
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [f, setF] = useState(blank)
+  const [resch, setResch] = useState(null) // cheque whose date is being changed
+  const [rf, setRf] = useState({ new_date: '', new_slot: 'MORNING', reason: '' })
+  const [hist, setHist] = useState(null)   // cheque whose history is shown
+  const [msg, setMsg] = useState(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [needKey, setNeedKey] = useState(false)
+  const [keyInput, setKeyInput] = useState('')
+  const [pushOn, setPushOn] = useState(true)
+
+  const load = useCallback(async () => {
+    setErr('')
+    try { setRows(await (await call('/api/cheques')).json()); setNeedKey(false) }
+    catch (e) {
+      if (e.status === 401) setNeedKey(true)
+      else setErr(e.status ? e.message : 'Cannot reach the server. Check your connection.')
+    }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  // HR phones register for notifications from this page (the admin bell is in the admin menu)
+  useEffect(() => {
+    if (!standalone || !('serviceWorker' in navigator)) return
+    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription())
+      .then(sub => setPushOn(!!sub && Notification.permission === 'granted')).catch(() => {})
+  }, [standalone])
+  const enablePush = async () => {
+    try { if (await enablePushNotifications('hr')) setPushOn(true) }
+    catch (e) { setErr(e.status === 401 ? 'Enter the passcode first.' : 'Could not turn on notifications.') }
+  }
+
+  const need = () => {
+    const name = by.trim()
+    if (!NAME_RE.test(name)) { setErr('Enter your name at the top first (letters only, 2-60 characters).'); return null }
+    localStorage.setItem('by', name); setErr(''); return name
+  }
+  const money0 = n => n == null ? '' : money(n)
+  const counts = {
+    PENDING: rows.filter(r => r.status === 'PENDING').length,
+    DONE: rows.filter(r => r.status === 'DONE').length,
+    CANCELLED: rows.filter(r => r.status === 'CANCELLED').length,
+  }
+  const pend = rows.filter(r => r.status === 'PENDING')
+  const overdue = pend.filter(r => daysUntil(r.cheque_date) < 0).length
+  const today = pend.filter(r => daysUntil(r.cheque_date) === 0).length
+  const week = pend.filter(r => { const d = daysUntil(r.cheque_date); return d > 0 && d <= 7 }).length
+  const list = rows.filter(r => r.status === tab)
+    .sort((a, b) => {
+      const byDate = a.cheque_date.localeCompare(b.cheque_date) || (SLOT_ORDER[a.release_slot] - SLOT_ORDER[b.release_slot])
+      return tab === 'PENDING' ? byDate : -byDate
+    })
+
+  const badge = r => {
+    if (r.status === 'DONE') return { cls: 'bg-emerald-100 text-emerald-800', t: 'USED' }
+    if (r.status === 'CANCELLED') return { cls: 'bg-ink/10 text-ink/70', t: 'CANCELLED' }
+    const d = daysUntil(r.cheque_date)
+    if (d < 0) return { cls: 'bg-red-100 text-red-800', t: `OVERDUE ${-d}d` }
+    if (d === 0) return nowLkInput().slice(11) >= SLOT_HM[r.release_slot]
+      ? { cls: 'bg-red-100 text-red-800', t: `${SLOT_LABEL[r.release_slot]} PASSED` }
+      : { cls: 'bg-amber-100 text-amber-900', t: `TODAY ${SLOT_LABEL[r.release_slot]}` }
+    if (d === 1) return { cls: 'bg-amber-100 text-amber-900', t: 'TOMORROW' }
+    return { cls: 'bg-ink/10 text-ink/70', t: `IN ${d} DAYS` }
+  }
+
+  const openNew = () => { if (!need()) return; setEditing(null); setF(blank()); setMsg(null); setOpen(true) }
+  const openEdit = r => {
+    if (!need()) return
+    setEditing(r)
+    setF({ payee_name: r.payee_name, cheque_no: r.cheque_no || '', amount: r.amount ? String(r.amount) : '', cheque_date: r.cheque_date,
+      release_slot: r.release_slot, remind_days_before: String(r.remind_days_before), remind_minutes_before: String(r.remind_minutes_before), note: r.note || '' })
+    setMsg(null); setOpen(true)
+  }
+  const send = async (path, method, body) => {
+    setBusy(true)
+    try { await call(path, { method, body: body && JSON.stringify(body) }); await load(); setBusy(false); return true }
+    catch (e) {
+      const m = e.status ? e.message : 'Cannot reach the server. Check your connection.'
+      setMsg({ t: 'err', m }); setErr(m); setBusy(false); return false   // msg shows inside a dialog, err shows on the page
+    }
+  }
+
+  const submit = async e => {
+    e.preventDefault(); setMsg(null)
+    const name = need(); if (!name) return
+    const amount = parseFloat(f.amount)
+    if (!f.payee_name.trim()) return setMsg({ t: 'err', m: 'Enter the name on the cheque.' })
+    if (f.amount && !(amount > 0)) return setMsg({ t: 'err', m: 'Amount must be greater than 0.' })
+    if (!f.cheque_date) return setMsg({ t: 'err', m: 'Choose the cheque date.' })
+    const body = { payee_name: f.payee_name.trim(), cheque_no: f.cheque_no.trim() || null, amount: f.amount ? amount : null,
+      cheque_date: f.cheque_date, release_slot: f.release_slot, remind_days_before: Number(f.remind_days_before),
+      remind_minutes_before: Number(f.remind_minutes_before), note: f.note.trim() || null, by: name }
+    const ok = editing ? await send(`/api/cheques/${editing.id}`, 'PUT', body) : await send('/api/cheques', 'POST', body)
+    if (ok) { setOpen(false); setTab('PENDING') }
+  }
+  const submitResch = async e => {
+    e.preventDefault(); setMsg(null)
+    const name = need(); if (!name) return
+    if (!rf.new_date) return setMsg({ t: 'err', m: 'Choose the new date.' })
+    if (rf.new_date === resch.cheque_date && rf.new_slot === resch.release_slot) return setMsg({ t: 'err', m: 'That is already the cheque date and release time.' })
+    if (await send(`/api/cheques/${resch.id}/reschedule`, 'POST', { new_date: rf.new_date, new_slot: rf.new_slot, reason: rf.reason.trim() || null, by: name })) setResch(null)
+  }
+  const setStatus = async (r, status, ask) => {
+    const name = need(); if (!name) return
+    if (ask && !window.confirm(ask)) return
+    setMsg(null)
+    await send(`/api/cheques/${r.id}/status`, 'POST', { status, by: name })
+  }
+  const remove = async r => {
+    if (!window.confirm(`Delete the cheque for ${r.payee_name}? Its history is deleted too.`)) return
+    try { await call(`/api/cheques/${r.id}`, { method: 'DELETE' }); await load() }
+    catch (e) { setErr(e.status ? e.message : 'Could not delete. Check your connection.') }
+  }
+
+  if (needKey) return (
+    <main className="mx-auto max-w-md space-y-3 p-4">
+      <form className="card space-y-3" onSubmit={e => { e.preventDefault(); localStorage.setItem('hrKey', keyInput.trim()); load() }}>
+        <h1 className="flex items-center gap-2 text-lg font-bold uppercase"><Lock size={18} />Cheque access</h1>
+        <p className="text-sm text-ink/70">This page is for HR and admin only. Enter the passcode to continue on this device.</p>
+        <input className="input" type="password" autoComplete="off" placeholder="Passcode" value={keyInput} onChange={e => setKeyInput(e.target.value)} />
+        <button className="btn w-full">Unlock</button>
+      </form>
+    </main>
+  )
+
+  return (
+    <>
+      {standalone && (
+        <header className="no-print sticky top-0 z-10 flex items-center justify-between bg-ink px-4 py-3 text-white">
+          <span className="text-lg font-bold">Cheque Reminders</span>
+          {!pushOn && <button type="button" onClick={enablePush} className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-white/10"
+            title="Get a phone notification when a cheque date is near"><Bell size={18} />Turn on alerts</button>}
+        </header>
+      )}
+      <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl"><FileText size={24} className="shrink-0" />Cheques</h1>
+          <button className="btn" onClick={openNew}>+ ADD CHEQUE</button>
+        </div>
+        <label className="block text-sm font-medium">Your name <span className="font-normal text-ink/60">(saved with every change)</span>
+          <input className="input mt-1" maxLength={60} placeholder="e.g. Nimali Silva" value={by} onChange={e => setBy(e.target.value)} /></label>
+        <Notice m={err && { t: 'err', m: err }} />
+
+        <div className="grid grid-cols-3 gap-3 text-center">
+          {[['Overdue', overdue, 'text-red-700'], ['Today', today, 'text-amber-700'], ['Next 7 days', week, 'text-ink']].map(([l, n, col]) => (
+            <div key={l} className="card"><p className="text-xs font-semibold uppercase text-ink/60">{l}</p><p className={`text-2xl font-bold ${col}`}>{n}</p></div>
+          ))}
+        </div>
+
+        <div className="flex gap-2">
+          {[['PENDING', 'Upcoming'], ['DONE', 'Used'], ['CANCELLED', 'Cancelled']].map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setTab(k)}
+              className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium ${tab === k ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white hover:bg-ink/5'}`}>
+              {l} ({counts[k]})</button>
+          ))}
+        </div>
+
+        <section className="space-y-3">
+          {!list.length && <p className="card py-6 text-center text-ink/60">
+            {tab === 'PENDING' ? 'No upcoming cheques. Tap + ADD CHEQUE to note one.' : 'Nothing here yet.'}</p>}
+          {list.map(r => {
+            const b = badge(r)
+            return (
+              <article key={r.id} className={`card space-y-2 ${r.status !== 'PENDING' ? 'opacity-70' : ''}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold">{r.payee_name}</h3>
+                    <p className="text-xs text-ink/60">{r.cheque_no ? `Cheque ${r.cheque_no}` : 'No cheque number'}{r.amount ? ` · ${money0(r.amount)}` : ''}</p>
+                  </div>
+                  <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${b.cls}`}>{b.t}</span>
+                </div>
+                <p className="text-sm"><span className="text-ink/60">Cheque date:</span> <span className="font-semibold">{weekday(r.cheque_date)} {sriDate(r.cheque_date)} · {SLOT_LABEL[r.release_slot]}</span>
+                  {r.reschedule_count > 0 && <span className="text-xs text-amber-800"> · changed {r.reschedule_count}× (first {sriDate(r.original_date)})</span>}</p>
+                {r.note && <p className="text-sm text-ink/70">{r.note}</p>}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {r.status === 'PENDING' && <>
+                    <button type="button" className="btn !px-3 !py-1.5 text-sm" onClick={() => setStatus(r, 'DONE', `Mark the cheque for ${r.payee_name} as USED?`)}><CheckCircle2 size={14} />Used</button>
+                    <button type="button" className="btn-ghost" onClick={() => { if (!need()) return; setResch(r); setRf({ new_date: r.cheque_date, new_slot: r.release_slot, reason: '' }); setMsg(null) }}>Change date / time</button>
+                  </>}
+                  {r.status !== 'PENDING' && <button type="button" className="btn-ghost" onClick={() => setStatus(r, 'PENDING')}>Reopen</button>}
+                  <button type="button" className="btn-ghost" onClick={() => setHist(r)}>History</button>
+                  <ChequeMenu items={[
+                    ...(r.status === 'PENDING' ? [
+                      { label: 'Edit', icon: <Pencil size={14} />, onClick: () => openEdit(r) },
+                      { label: 'Cancel cheque', icon: <AlertCircle size={14} />, onClick: () => setStatus(r, 'CANCELLED', `Cancel the cheque for ${r.payee_name}? It will stop sending reminders.`) },
+                    ] : []),
+                    { label: 'Delete', icon: <Trash2 size={14} />, danger: true, onClick: () => remove(r) },
+                  ]} />
+                </div>
+              </article>
+            )
+          })}
+        </section>
+
+        {open && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+            <form role="dialog" aria-modal="true" aria-label="Cheque" onSubmit={submit} noValidate
+              className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold uppercase">{editing ? 'Edit cheque' : 'Add cheque'}</h2>
+                <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
+              </div>
+              <label className="block text-sm font-medium">Name on the cheque
+                <input className="input mt-1" maxLength={150} value={f.payee_name} placeholder="Person / company"
+                  onChange={e => setF(p => ({ ...p, payee_name: e.target.value }))} /></label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block text-sm font-medium">Cheque no. <span className="font-normal text-ink/60">(optional)</span>
+                  <input className="input mt-1" maxLength={30} value={f.cheque_no} onChange={e => setF(p => ({ ...p, cheque_no: e.target.value }))} /></label>
+                <label className="block text-sm font-medium">Amount <span className="font-normal text-ink/60">(optional)</span>
+                  <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.amount} onChange={e => setF(p => ({ ...p, amount: e.target.value }))} /></label>
+              </div>
+              {editing
+                ? <p className="rounded-md bg-ink/5 p-2 text-sm">Release: <b>{sriDate(editing.cheque_date)} · {SLOT_LABEL[editing.release_slot]}</b> — use <b>Change date / time</b> on the cheque to move it (the change is recorded).</p>
+                : <div className="grid grid-cols-2 gap-2">
+                    <label className="block text-sm font-medium">Release date
+                      <input className="input mt-1" type="date" value={f.cheque_date} onChange={e => setF(p => ({ ...p, cheque_date: e.target.value }))} /></label>
+                    <label className="block text-sm font-medium">Release time
+                      <select className="input mt-1" value={f.release_slot} onChange={e => setF(p => ({ ...p, release_slot: e.target.value }))}>
+                        <option value="MORNING">Morning · 10:00 AM</option>
+                        <option value="EVENING">Evening · 3:30 PM</option>
+                      </select></label>
+                  </div>}
+              <label className="block text-sm font-medium">Alarm before release
+                <select className="input mt-1" value={f.remind_minutes_before} onChange={e => setF(p => ({ ...p, remind_minutes_before: e.target.value }))}>
+                  <option value="0">Only at the release time</option>
+                  <option value="5">5 minutes before + at release time</option>
+                  <option value="10">10 minutes before + at release time</option>
+                  <option value="15">15 minutes before + at release time</option>
+                  <option value="30">30 minutes before + at release time</option>
+                  <option value="60">1 hour before + at release time</option>
+                </select></label>
+              <label className="block text-sm font-medium">Also remind me
+                <select className="input mt-1" value={f.remind_days_before} onChange={e => setF(p => ({ ...p, remind_days_before: e.target.value }))}>
+                  <option value="0">Not on earlier days</option>
+                  <option value="1">1 day before (9:00 AM)</option>
+                  <option value="2">2 days before (9:00 AM)</option>
+                  <option value="3">3 days before (9:00 AM)</option>
+                  <option value="7">1 week before (9:00 AM)</option>
+                </select>
+                <span className="mt-1 block text-xs font-normal text-ink/60">You also get an alert 30 minutes after the release time if the cheque is still not marked Used, and a reminder every morning at 9:00 AM once its date has passed.</span></label>
+              <label className="block text-sm font-medium">Note <span className="font-normal text-ink/60">(optional)</span>
+                <input className="input mt-1" maxLength={300} value={f.note} onChange={e => setF(p => ({ ...p, note: e.target.value }))} /></label>
+              <Notice m={msg} />
+              <div className="flex gap-2">
+                <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
+                <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save'}</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {resch && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+            <form role="dialog" aria-modal="true" aria-label="Change date" onSubmit={submitResch} noValidate
+              className="w-full max-w-md space-y-3 rounded-t-xl bg-white p-4 sm:rounded-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold uppercase">Change date / time</h2>
+                  <p className="text-xs text-ink/60">{resch.payee_name} · now {sriDate(resch.cheque_date)} · {SLOT_LABEL[resch.release_slot]}</p>
+                </div>
+                <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setResch(null)} aria-label="Close">×</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block text-sm font-medium">New date
+                  <input className="input mt-1" type="date" autoFocus value={rf.new_date} onChange={e => setRf(p => ({ ...p, new_date: e.target.value }))} /></label>
+                <label className="block text-sm font-medium">Release time
+                  <select className="input mt-1" value={rf.new_slot} onChange={e => setRf(p => ({ ...p, new_slot: e.target.value }))}>
+                    <option value="MORNING">Morning · 10:00 AM</option>
+                    <option value="EVENING">Evening · 3:30 PM</option>
+                  </select></label>
+              </div>
+              <label className="block text-sm font-medium">Reason <span className="font-normal text-ink/60">(optional)</span>
+                <input className="input mt-1" maxLength={300} placeholder="e.g. Customer asked to hold" value={rf.reason} onChange={e => setRf(p => ({ ...p, reason: e.target.value }))} /></label>
+              <Notice m={msg} />
+              <div className="flex gap-2">
+                <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setResch(null)}>Cancel</button>
+                <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save'}</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {hist && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4" onClick={() => setHist(null)}>
+            <div role="dialog" aria-modal="true" aria-label="History" onClick={e => e.stopPropagation()}
+              className="max-h-[80vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold uppercase">History · {hist.payee_name}</h2>
+                <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setHist(null)} aria-label="Close">×</button>
+              </div>
+              <ul className="divide-y divide-ink/10 text-sm">
+                {(rows.find(x => x.id === hist.id)?.events || []).slice().reverse().map(ev => (
+                  <li key={ev.id} className="py-2">
+                    <p className="font-medium">{{ CREATED: 'Noted', EDITED: 'Edited', RESCHEDULED: 'Date / time changed', DONE: 'Marked used', CANCELLED: 'Cancelled', REOPENED: 'Reopened' }[ev.action] || ev.action}
+                      {ev.action === 'RESCHEDULED' && ` · ${sriDate(ev.old_date)} ${SLOT_LABEL[ev.old_slot] || ''} → ${sriDate(ev.new_date)} ${SLOT_LABEL[ev.new_slot] || ''}`}
+                      {ev.action === 'CREATED' && ` · ${sriDate(ev.new_date)} ${SLOT_LABEL[ev.new_slot] || ''}`}</p>
+                    <p className="text-xs text-ink/60">{ev.by} · {fmtDT(ev.at)}{ev.note ? ` · ${ev.note}` : ''}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+      </main>
+    </>
+  )
+}
+
 function AdminNav() {
   const link = ({ isActive }) => `flex flex-none items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
   const [pushEnabled, setPushEnabled] = useState(false)
@@ -1500,6 +1866,7 @@ function AdminNav() {
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
         <NavLink to="/admin/damages" className={link}>DAMAGES</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
+        <NavLink to="/admin/cheques" className={link}><FileText size={18} />CHEQUE</NavLink>
         <NavLink to="/admin/dashboard" className={link}><Settings size={18} />MANAGE</NavLink>
         {!pushEnabled && (
           <button type="button" onClick={handleEnable}
@@ -1903,8 +2270,10 @@ useEffect(() => {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="departments" element={<Departments />} />
           <Route path="projects" element={<ProjectsPage />} />
+          <Route path="cheques" element={<ChequesPage />} />
           <Route path="damages" element={<DamagesHome />} />
         </Route>
+        <Route path="/hr/cheques" element={<ChequesPage standalone />} />
         {Object.keys(PAGES).map(p => <Route key={p} path={`/department/${p}`} element={<DepartmentPage page={p} />} />)}
         {DAMAGE_DEPTS.map(d => <Route key={d.slug} path={d.path} element={<DamagePage key={d.slug} slug={d.slug} />} />)}
         <Route path="*" element={<Navigate to="/admin/departments" replace />} />

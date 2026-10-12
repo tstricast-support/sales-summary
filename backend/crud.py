@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from sqlalchemy import func, and_,inspect,text
 from sqlalchemy.orm import joinedload
@@ -342,8 +342,187 @@ def migrate_audit_logs(db):
 def add_push_subscription(db, s: schemas.PushSubscriptionIn):
     existing = db.query(models.PushSubscription).filter_by(endpoint=s.endpoint).first()
     if existing:
-        existing.p256dh, existing.auth, existing.label = s.keys["p256dh"], s.keys["auth"], s.label
+        existing.p256dh, existing.auth, existing.label, existing.role = s.keys["p256dh"], s.keys["auth"], s.label, s.role
     else:
         db.add(models.PushSubscription(endpoint=s.endpoint, p256dh=s.keys["p256dh"],
-                                        auth=s.keys["auth"], label=s.label))
+                                        auth=s.keys["auth"], label=s.label, role=s.role))
     db.commit()
+
+# ───────────── cheques ─────────────
+# The company releases cheques twice a day.
+RELEASE_SLOTS = {"MORNING": (10, 0, "10:00 AM"), "EVENING": (15, 30, "3:30 PM")}
+CHEQUE_DAILY_HOUR = 9        # "N days before" and "overdue" alerts are sent from 9:00 am
+CHEQUE_STILL_PENDING_MIN = 30  # minutes after the release time, if the cheque is still not marked Used
+
+
+def slot_label(slot):
+    return RELEASE_SLOTS.get(slot, RELEASE_SLOTS["MORNING"])[2]
+
+
+def release_at(c):
+    """The exact moment this cheque is released (Sri Lanka time)."""
+    h, m, _ = RELEASE_SLOTS.get(c.release_slot, RELEASE_SLOTS["MORNING"])
+    return datetime(c.cheque_date.year, c.cheque_date.month, c.cheque_date.day, h, m, tzinfo=schemas.LK_TZ)
+
+
+def _cheque_event(db, rec, action, by, old_date=None, new_date=None, old_slot=None, new_slot=None, note=None):
+    db.add(models.ChequeEvent(cheque_id=rec.id, action=action, by=by, old_date=old_date, new_date=new_date,
+                              old_slot=old_slot, new_slot=new_slot, note=note))
+
+
+def _reset_cheque_reminders(rec):
+    rec.alert_stage = 0
+    rec.notified_before = rec.notified_due = False
+    rec.last_overdue_on = None
+
+
+def list_cheques(db):
+    rows = db.query(models.Cheque).all()
+    slot_order = {"MORNING": 0, "EVENING": 1}
+    return sorted(rows, key=lambda r: (r.cheque_date, slot_order.get(r.release_slot, 0), r.id))
+
+
+def add_cheque(db, d: schemas.ChequeIn):
+    rec = models.Cheque(payee_name=d.payee_name, cheque_no=d.cheque_no, amount=d.amount, cheque_date=d.cheque_date,
+                        original_date=d.cheque_date, release_slot=d.release_slot, remind_days_before=d.remind_days_before,
+                        remind_minutes_before=d.remind_minutes_before, note=d.note, created_by=d.by)
+    db.add(rec); db.flush()
+    _cheque_event(db, rec, "CREATED", d.by, new_date=d.cheque_date, new_slot=d.release_slot)
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def _get_cheque(db, cheque_id):
+    rec = db.query(models.Cheque).get(cheque_id)
+    if not rec:
+        raise LookupError("Cheque not found")
+    return rec
+
+
+def update_cheque(db, cheque_id: int, d: schemas.ChequeIn):
+    """Edits name / number / amount / note / reminders. The DATE and RELEASE TIME are changed only
+    through reschedule_cheque, so every change of them is logged."""
+    rec = _get_cheque(db, cheque_id)
+    if rec.status != "PENDING":
+        raise ValueError("This cheque is closed. Reopen it first to edit it.")
+    if d.remind_days_before != rec.remind_days_before or d.remind_minutes_before != rec.remind_minutes_before:
+        _reset_cheque_reminders(rec)
+    rec.payee_name, rec.cheque_no, rec.amount, rec.note = d.payee_name, d.cheque_no, d.amount, d.note
+    rec.remind_days_before, rec.remind_minutes_before = d.remind_days_before, d.remind_minutes_before
+    _cheque_event(db, rec, "EDITED", d.by)
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def reschedule_cheque(db, cheque_id: int, d: schemas.ChequeRescheduleIn):
+    rec = _get_cheque(db, cheque_id)
+    if rec.status != "PENDING":
+        raise ValueError("This cheque is closed. Reopen it first to change its date.")
+    new_slot = d.new_slot or rec.release_slot
+    if d.new_date == rec.cheque_date and new_slot == rec.release_slot:
+        raise ValueError("That is already the cheque date and release time.")
+    old_date, old_slot = rec.cheque_date, rec.release_slot
+    rec.cheque_date, rec.release_slot = d.new_date, new_slot
+    _reset_cheque_reminders(rec)                  # new date / time => alarms start again
+    _cheque_event(db, rec, "RESCHEDULED", d.by, old_date=old_date, new_date=d.new_date,
+                  old_slot=old_slot, new_slot=new_slot, note=d.reason)
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def set_cheque_status(db, cheque_id: int, d: schemas.ChequeStatusIn):
+    rec = _get_cheque(db, cheque_id)
+    if d.status == rec.status:
+        raise ValueError(f"This cheque is already {rec.status.lower()}.")
+    action = {"DONE": "DONE", "CANCELLED": "CANCELLED", "PENDING": "REOPENED"}[d.status]
+    rec.status = d.status
+    rec.closed_at = None if d.status == "PENDING" else datetime.now(timezone.utc)
+    _reset_cheque_reminders(rec)
+    _cheque_event(db, rec, action, d.by, note=d.note)
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def delete_cheque(db, cheque_id: int):
+    rec = _get_cheque(db, cheque_id)
+    db.delete(rec); db.commit()
+
+
+def process_cheque_reminders(db, now=None):
+    """Called every minute. Works like an alarm around each cheque's release time (10:00 am / 3:30 pm).
+    For a PENDING cheque, in order, at most one alert per step (a missed step is skipped, never replayed):
+      1. N days before, at 9:00 am          (N = remind_days_before, 0 = none)
+      2. M minutes before the release time  (M = remind_minutes_before, 0 = none)
+      3. exactly at the release time        ("release time NOW")
+      4. 30 minutes after the release time, if it is still not marked Used
+    After the cheque date has passed and it is still PENDING: one 'OVERDUE' alert every morning from 9:00 am.
+    Marking it Used / Cancelled stops everything; changing its date or time starts the alarms again."""
+    import notify
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone(schemas.LK_TZ)
+    today = local.date()
+    rows = (db.query(models.Cheque).filter(models.Cheque.status == "PENDING",
+                                           models.Cheque.cheque_date <= today + timedelta(days=30)).all())
+    for c in rows:
+        label = slot_label(c.release_slot)
+        what = c.payee_name + (f" · cheque {c.cheque_no}" if c.cheque_no else "") + (f" · {c.amount:,.2f}" if c.amount else "")
+        left = (c.cheque_date - today).days
+        title = body = None
+        if left < 0:                                             # date passed, still pending
+            if local.hour >= CHEQUE_DAILY_HOUR and c.last_overdue_on != today:
+                c.last_overdue_on = today
+                title = f"Cheque OVERDUE ({-left} day{'s' if -left > 1 else ''})"
+                body = f"{what} (was {c.cheque_date:%d/%m/%Y} {label}) - mark it Used or change the date"
+        else:
+            rel = release_at(c)
+            steps = []
+            if c.remind_days_before:
+                day_before = datetime(c.cheque_date.year, c.cheque_date.month, c.cheque_date.day,
+                                      CHEQUE_DAILY_HOUR, 0, tzinfo=schemas.LK_TZ) - timedelta(days=c.remind_days_before)
+                steps.append((1, day_before))
+            if c.remind_minutes_before:
+                steps.append((2, rel - timedelta(minutes=c.remind_minutes_before)))
+            steps.append((3, rel))
+            steps.append((4, rel + timedelta(minutes=CHEQUE_STILL_PENDING_MIN)))
+            due = [(n, t) for n, t in steps if t <= now and n > c.alert_stage]
+            if due:
+                n = max(due)[0]
+                c.alert_stage = n
+                if n == 1:
+                    title = f"Cheque TODAY at {label}" if left == 0 else f"Cheque in {left} day{'s' if left > 1 else ''}"
+                    body = f"{what} (release {c.cheque_date:%d/%m/%Y} {label})"
+                elif n == 2:
+                    mins = -(-int((rel - now).total_seconds()) // 60)   # whole minutes left, rounded up
+                    title = f"Cheque release in {max(mins, 1)} min ({label})"
+                    body = what
+                elif n == 3:
+                    title, body = f"Cheque release time NOW ({label})", what
+                else:
+                    title, body = "Cheque still NOT marked Used", f"{what} - was due at {label}"
+        if title:
+            db.commit()   # mark as sent first, so a crash can never cause a repeat storm
+            notify.safe_notify(db, title=title, body=body, url="/admin/cheques",
+                               roles=("admin", "hr"), url_by_role={"hr": "/hr/cheques"})
+
+
+def migrate_hr(db):
+    """Adds columns that newer versions need to tables created by an earlier version. Safe on every startup."""
+    insp = inspect(db.get_bind())
+    tables = set(insp.get_table_names())
+
+    def add_missing(table, columns):
+        if table not in tables:
+            return  # table does not exist yet; create_all builds it with every column
+        have = {col["name"] for col in insp.get_columns(table)}
+        for name, ddl in columns.items():
+            if name not in have:
+                db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+        db.commit()
+
+    add_missing("push_subscriptions", {"role": "VARCHAR(10) NOT NULL DEFAULT 'admin'"})
+    add_missing("cheques", {
+        "release_slot": "VARCHAR(8) NOT NULL DEFAULT 'MORNING'",
+        "remind_minutes_before": "INTEGER NOT NULL DEFAULT 15",
+        "alert_stage": "INTEGER NOT NULL DEFAULT 0",
+    })
+    add_missing("cheque_events", {"old_slot": "VARCHAR(8)", "new_slot": "VARCHAR(8)"})

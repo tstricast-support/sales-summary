@@ -1,5 +1,6 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
@@ -172,3 +173,99 @@ class PushSubscriptionIn(BaseModel):
     endpoint: str
     keys: dict  # {"p256dh": ..., "auth": ...}
     label: str | None = None
+    role: Literal["admin", "hr"] = "admin"
+
+LK_TZ = timezone(timedelta(hours=5, minutes=30))  # Sri Lanka has no daylight saving
+
+
+# ───────────── cheques (HR + admin) ─────────────
+def _clean_name(v: str):
+    v = " ".join(v.split())
+    if not NAME_RE.match(v):
+        raise ValueError("Your name must be 2-60 characters: letters, spaces, . ' -")
+    return v
+
+
+class ChequeIn(BaseModel):
+    payee_name: str
+    cheque_no: str | None = Field(default=None, max_length=30)
+    amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+    cheque_date: date
+    release_slot: Literal["MORNING", "EVENING"] = "MORNING"   # 10:00 am or 3:30 pm
+    remind_days_before: int = Field(default=1, ge=0, le=30)
+    remind_minutes_before: int = Field(default=15, ge=0, le=180)
+    note: str | None = Field(default=None, max_length=300)
+    by: str
+
+    @field_validator("payee_name")
+    @classmethod
+    def valid_payee(cls, v: str):
+        v = " ".join(v.split())
+        if not (1 <= len(v) <= 150):
+            raise ValueError("Name must be 1-150 characters")
+        return v
+
+    @field_validator("cheque_no")
+    @classmethod
+    def blank_no(cls, v):
+        return (v or "").strip() or None
+
+    @field_validator("by")
+    @classmethod
+    def valid_by(cls, v: str):
+        return _clean_name(v)
+
+
+class ChequeRescheduleIn(BaseModel):
+    new_date: date
+    new_slot: Literal["MORNING", "EVENING"] | None = None   # None = keep the current release time
+    reason: str | None = Field(default=None, max_length=300)
+    by: str
+
+    @field_validator("by")
+    @classmethod
+    def valid_by(cls, v: str):
+        return _clean_name(v)
+
+
+class ChequeStatusIn(BaseModel):
+    status: Literal["PENDING", "DONE", "CANCELLED"]
+    note: str | None = Field(default=None, max_length=300)
+    by: str
+
+    @field_validator("by")
+    @classmethod
+    def valid_by(cls, v: str):
+        return _clean_name(v)
+
+
+class ChequeEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    action: str
+    old_date: date | None = None
+    new_date: date | None = None
+    old_slot: str | None = None
+    new_slot: str | None = None
+    note: str | None = None
+    by: str
+    at: datetime | None = None
+
+
+class ChequeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    payee_name: str
+    cheque_no: str | None = None
+    amount: float | None = None
+    cheque_date: date
+    original_date: date
+    release_slot: str
+    status: str
+    remind_days_before: int
+    remind_minutes_before: int
+    note: str | None = None
+    closed_at: datetime | None = None
+    created_by: str
+    reschedule_count: int
+    events: list[ChequeEventOut] = []

@@ -1,7 +1,6 @@
-from sqlalchemy import Column, Integer, String, Date, Numeric, DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, Date, Numeric, DateTime, Boolean, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from database import Base
-
 
 class Department(Base):
     __tablename__ = "departments"
@@ -104,4 +103,48 @@ class PushSubscription(Base):
     p256dh = Column(String(200), nullable=False)
     auth = Column(String(100), nullable=False)
     label = Column(String(60))  # which admin/device, optional
+    role = Column(String(10), nullable=False, default="admin", server_default="admin")  # admin | hr
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Cheque(Base):
+    """A cheque HR has noted. cheque_date = the date it will be released / presented."""
+    __tablename__ = "cheques"
+    id = Column(Integer, primary_key=True)
+    payee_name = Column(String(150), nullable=False, index=True)
+    cheque_no = Column(String(30))
+    amount = Column(Numeric(14, 2))
+    cheque_date = Column(Date, nullable=False, index=True)       # current release date
+    original_date = Column(Date, nullable=False)                 # first date it was noted for
+    status = Column(String(10), nullable=False, default="PENDING", server_default="PENDING", index=True)  # PENDING | DONE | CANCELLED
+    remind_days_before = Column(Integer, nullable=False, default=1, server_default="1")
+    release_slot = Column(String(8), nullable=False, default="MORNING", server_default="MORNING")  # MORNING 10:00 am | EVENING 3:30 pm
+    remind_minutes_before = Column(Integer, nullable=False, default=15, server_default="15")       # alarm before the release time
+    alert_stage = Column(Integer, nullable=False, default=0, server_default="0")                   # last alert sent for the current date/time
+    note = Column(String(300))
+    notified_before = Column(Boolean, nullable=False, default=False, server_default="false")
+    notified_due = Column(Boolean, nullable=False, default=False, server_default="false")
+    last_overdue_on = Column(Date)                               # one overdue nudge per day
+    closed_at = Column(DateTime(timezone=True))
+    created_by = Column(String(60), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    events = relationship("ChequeEvent", cascade="all, delete-orphan", lazy="selectin", order_by="ChequeEvent.id")
+
+    @property
+    def reschedule_count(self):
+        return sum(1 for e in self.events if e.action == "RESCHEDULED")
+
+
+class ChequeEvent(Base):
+    """History of what happened to a cheque (who changed the date, who marked it used...)."""
+    __tablename__ = "cheque_events"
+    id = Column(Integer, primary_key=True)
+    cheque_id = Column(Integer, ForeignKey("cheques.id", ondelete="CASCADE"), nullable=False, index=True)
+    action = Column(String(15), nullable=False)   # CREATED | EDITED | RESCHEDULED | DONE | CANCELLED | REOPENED
+    old_date = Column(Date)
+    new_date = Column(Date)
+    old_slot = Column(String(8))
+    new_slot = Column(String(8))
+    note = Column(String(300))
+    by = Column(String(60), nullable=False)
+    at = Column(DateTime(timezone=True), server_default=func.now())
