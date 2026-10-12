@@ -1,4 +1,4 @@
-import io,os
+import asyncio, io, os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
@@ -22,6 +22,20 @@ PAGE_FOR_SLUG = {
 }
 
 
+def run_credit_reminders():
+    with SessionLocal() as db:
+        crud.process_credit_reminders(db)
+
+
+async def reminder_loop():
+    while True:
+        try:
+            await asyncio.to_thread(run_credit_reminders)
+        except Exception as e:
+            print("credit reminder run failed:", e)
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app):
     Base.metadata.create_all(bind=engine)
@@ -30,7 +44,10 @@ async def lifespan(app):
         crud.migrate_projects(db)
         crud.migrate_audit_logs(db)
         crud.migrate_damages(db)
+        crud.migrate_credits(db)
+    reminder_task = asyncio.create_task(reminder_loop())
     yield
+    reminder_task.cancel()
 
 
 app = FastAPI(title="Summary API", lifespan=lifespan)
@@ -303,3 +320,51 @@ def export(start: date, end: date, department: str | None = None, db: Session = 
     name = f"summary_{department or 'all'}_{start}_{end}.xlsx"
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# ───────────── Credits  ─────────────
+@app.get("/api/credits", response_model=list[schemas.CreditOut])
+def credits(db: Session = Depends(get_db)):
+    return crud.list_credits(db)
+
+
+@app.post("/api/credits", response_model=schemas.CreditOut)
+def add_credit(data: schemas.CreditIn, db: Session = Depends(get_db)):
+    return crud.add_credit(db, data)
+
+
+@app.put("/api/credits/{credit_id}", response_model=schemas.CreditOut)
+def edit_credit(credit_id: int, data: schemas.CreditIn, db: Session = Depends(get_db)):
+    try:
+        return crud.update_credit(db, credit_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/api/credits/{credit_id}")
+def remove_credit(credit_id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_credit(db, credit_id)
+        return {"ok": True}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.post("/api/credits/{credit_id}/payments", response_model=schemas.CreditOut)
+def add_credit_payment(credit_id: int, data: schemas.CreditPaymentIn, db: Session = Depends(get_db)):
+    try:
+        return crud.add_credit_payment(db, credit_id, data)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/api/credits/payments/{payment_id}", response_model=schemas.CreditOut)
+def remove_credit_payment(payment_id: int, db: Session = Depends(get_db)):
+    try:
+        return crud.delete_credit_payment(db, payment_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e))

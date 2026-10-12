@@ -1,7 +1,8 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 from decimal import Decimal
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z .'\-]{1,59}$")
 
@@ -172,3 +173,79 @@ class PushSubscriptionIn(BaseModel):
     endpoint: str
     keys: dict  # {"p256dh": ..., "auth": ...}
     label: str | None = None
+    label: str | None = None
+
+LK_TZ = timezone(timedelta(hours=5, minutes=30))  # Sri Lanka has no daylight saving
+
+
+def _aware(v: datetime) -> datetime:
+    return v if v.tzinfo else v.replace(tzinfo=LK_TZ)
+
+
+class CreditIn(BaseModel):
+    direction: Literal["GIVEN", "TAKEN"]
+    party_name: str
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    credit_date: datetime
+    due_at: datetime
+    remind_before_hours: int = Field(default=24, ge=0, le=720)
+    note: str | None = Field(default=None, max_length=300)
+    repeat_monthly: bool = False
+    monthly_amount: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=2)
+
+    @field_validator("party_name")
+    @classmethod
+    def valid_party(cls, v: str):
+        v = " ".join(v.split())
+        if not (1 <= len(v) <= 150):
+            raise ValueError("Name must be 1-150 characters")
+        return v
+
+    @field_validator("credit_date", "due_at")
+    @classmethod
+    def with_tz(cls, v: datetime):
+        return _aware(v)
+
+    @model_validator(mode="after")
+    def due_after_credit(self):
+        if self.due_at < self.credit_date:
+            raise ValueError("Due date/time cannot be before the credit date/time")
+        return self
+
+
+class CreditPaymentIn(BaseModel):
+    amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
+    paid_at: datetime
+    note: str | None = Field(default=None, max_length=300)
+
+    @field_validator("paid_at")
+    @classmethod
+    def with_tz(cls, v: datetime):
+        return _aware(v)
+
+
+class CreditPaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    amount: float
+    paid_at: datetime
+    note: str | None = None
+
+
+class CreditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    direction: str
+    party_name: str
+    amount: float
+    paid: float
+    balance: float
+    is_settled: bool
+    credit_date: datetime
+    due_at: datetime
+    next_due_at: datetime
+    remind_before_hours: int
+    note: str | None = None
+    repeat_monthly: bool
+    monthly_amount: float | None = None
+    payments: list[CreditPaymentOut] = []

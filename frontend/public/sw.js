@@ -1,4 +1,4 @@
-const CACHE = 'summary-v3'
+const CACHE = 'summary-v4'
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll([
     '/', '/manifest.json', '/icon.svg',
@@ -33,7 +33,7 @@ self.addEventListener('notificationclick', e => {
 self.addEventListener('fetch', e => {
   const req = e.request, url = new URL(req.url)
   if (req.method !== 'GET' || !url.protocol.startsWith('http')) return
-  const skip = /\/api\/(export|audit|summary)/.test(url.pathname)
+  const skip = /\/api\/(export|audit|summary|credits)/.test(url.pathname)
   e.respondWith(fetch(req).then(res => {
     if (res.ok && !skip) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy).catch(() => {})) }
     return res

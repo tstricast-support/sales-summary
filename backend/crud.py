@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from sqlalchemy import func, and_,inspect,text
 from sqlalchemy.orm import joinedload
@@ -346,4 +346,136 @@ def add_push_subscription(db, s: schemas.PushSubscriptionIn):
     else:
         db.add(models.PushSubscription(endpoint=s.endpoint, p256dh=s.keys["p256dh"],
                                         auth=s.keys["auth"], label=s.label))
+    db.commit()
+
+# ───────────── credits (money given / taken on credit) ─────────────
+def list_credits(db):
+    return db.query(models.Credit).order_by(models.Credit.due_at.asc(), models.Credit.id.asc()).all()
+
+
+def _skip_past_months(rec):
+    """Monthly credits only alert for FUTURE due dates, never for months that already passed."""
+    k = rec.current_k(datetime.now(timezone.utc)) if rec.repeat_monthly else -1
+    rec.last_due_k = rec.last_before_k = k
+
+
+def add_credit(db, c: schemas.CreditIn):
+    rec = models.Credit(direction=c.direction, party_name=c.party_name, amount=c.amount,
+                        credit_date=c.credit_date, due_at=c.due_at,
+                        remind_before_hours=c.remind_before_hours, note=c.note,
+                        repeat_monthly=c.repeat_monthly, monthly_amount=c.monthly_amount)
+    _skip_past_months(rec)
+    db.add(rec); db.commit(); db.refresh(rec)
+    return rec
+
+
+def update_credit(db, credit_id: int, c: schemas.CreditIn):
+    rec = db.query(models.Credit).get(credit_id)
+    if not rec:
+        raise LookupError("Credit not found")
+    if c.amount < rec.paid:
+        raise ValueError("Amount cannot be less than what has already been paid")
+    schedule_changed = (c.due_at != rec.due_at or c.remind_before_hours != rec.remind_before_hours
+                        or c.repeat_monthly != rec.repeat_monthly)
+    rec.direction, rec.party_name, rec.amount = c.direction, c.party_name, c.amount
+    rec.credit_date, rec.due_at, rec.remind_before_hours, rec.note = c.credit_date, c.due_at, c.remind_before_hours, c.note
+    rec.repeat_monthly, rec.monthly_amount = c.repeat_monthly, c.monthly_amount
+    if schedule_changed:
+        rec.notified_before = rec.notified_due = False   # new schedule => reminders start again
+        rec.last_overdue_on = None
+        _skip_past_months(rec)
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def delete_credit(db, credit_id: int):
+    rec = db.query(models.Credit).get(credit_id)
+    if not rec:
+        raise LookupError("Credit not found")
+    db.delete(rec); db.commit()
+
+
+def add_credit_payment(db, credit_id: int, p: schemas.CreditPaymentIn):
+    rec = db.query(models.Credit).get(credit_id)
+    if not rec:
+        raise LookupError("Credit not found")
+    if p.amount > rec.balance:
+        raise ValueError(f"Payment is more than the remaining balance ({rec.balance})")
+    db.add(models.CreditPayment(credit_id=credit_id, amount=p.amount, paid_at=p.paid_at, note=p.note))
+    db.commit(); db.refresh(rec)
+    return rec
+
+
+def delete_credit_payment(db, payment_id: int):
+    pay = db.query(models.CreditPayment).get(payment_id)
+    if not pay:
+        raise LookupError("Payment not found")
+    rec = db.query(models.Credit).get(pay.credit_id)
+    db.delete(pay); db.commit(); db.refresh(rec)
+    return rec
+
+
+def process_credit_reminders(db, now=None):
+    """Called every minute by the background loop in main.py.
+    One-off credit : 'coming up' push, 'due now' push, then one 'overdue' push per day (from 9am).
+    Monthly credit : every month, a 'coming up' push and a 'due' push, until fully paid."""
+    import notify
+    now = now or datetime.now(timezone.utc)
+    local = now.astimezone(schemas.LK_TZ)
+    rows = (db.query(models.Credit)
+            .filter(models.Credit.due_at <= now + timedelta(days=31)).all())
+    for c in rows:
+        if c.is_settled:
+            continue
+        who = "Collect from" if c.direction == "GIVEN" else "Pay to"
+        title = body = None
+
+        if c.repeat_monthly:
+            inst = f"instalment {c.monthly_amount:,.2f}, " if c.monthly_amount else ""
+            line = f"{who} {c.party_name}: {inst}balance {c.balance:,.2f}"
+            k = c.current_k(now)
+            if k > c.last_due_k:
+                c.last_due_k = c.last_before_k = k
+                title, body = "Monthly credit due", f"{line} (due {c.occurrence(k):%d/%m/%Y %I:%M %p})"
+            elif c.remind_before_hours and c.last_before_k < k + 1 \
+                    and now >= c.occurrence(k + 1) - timedelta(hours=c.remind_before_hours):
+                c.last_before_k = k + 1
+                title, body = "Monthly credit due soon", f"{line} (due {c.occurrence(k + 1):%d/%m/%Y %I:%M %p})"
+        else:
+            due = c.due_at if c.due_at.tzinfo else c.due_at.replace(tzinfo=timezone.utc)
+            due_local = due.astimezone(schemas.LK_TZ)
+            when = due_local.strftime("%d/%m/%Y %I:%M %p")
+            line = f"{who} {c.party_name}: {c.balance:,.2f}"
+            if now >= due:
+                if not c.notified_due:
+                    c.notified_due = c.notified_before = True
+                    title, body = "Credit due now", f"{line} (due {when})"
+                elif local.date() > due_local.date() and local.hour >= 9 and c.last_overdue_on != local.date():
+                    c.last_overdue_on = local.date()
+                    title, body = "Credit OVERDUE", f"{line} (was due {when})"
+            elif c.remind_before_hours and not c.notified_before and now >= due - timedelta(hours=c.remind_before_hours):
+                c.notified_before = True
+                title, body = "Credit due soon", f"{line} (due {when})"
+
+        if title:
+            db.commit()   # mark as sent first, so a crash can never cause a repeat storm
+            notify.safe_notify(db, title=title, body=body, url="/admin/credits")
+
+
+def migrate_credits(db):
+    """Adds the monthly-instalment columns to a credits table created by an earlier version.
+    Safe to call on every startup - it does nothing once the columns exist."""
+    insp = inspect(db.get_bind())
+    if "credits" not in insp.get_table_names():
+        return  # table does not exist yet; create_all builds it with every column
+    have = {col["name"] for col in insp.get_columns("credits")}
+    wanted = {
+        "repeat_monthly": "BOOLEAN NOT NULL DEFAULT false",
+        "monthly_amount": "NUMERIC(14,2)",
+        "last_due_k": "INTEGER NOT NULL DEFAULT -1",
+        "last_before_k": "INTEGER NOT NULL DEFAULT -1",
+    }
+    for name, ddl in wanted.items():
+        if name not in have:
+            db.execute(text(f"ALTER TABLE credits ADD COLUMN {name} {ddl}"))
     db.commit()
