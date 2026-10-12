@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation,useNavigate } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp, Wallet } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -29,15 +29,6 @@ const DAMAGE_DEPTS = [
   { slug: 'i-lab-std', name: 'I LAB STD', path: '/department/i-lab-std-damage', back: 'i-lab-std' },
   { slug: 'i-photobook', name: 'I PHOTOBOOK', path: '/department/i-photobook-damage' },
 ]
-
-// Credit date/time helpers — always Sri Lanka time (UTC+5:30), whatever the device clock says
-const LK_MS = 5.5 * 3600e3
-const toLkInput = isoStr => new Date(new Date(isoStr).getTime() + LK_MS).toISOString().slice(0, 16)   // -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local">
-const fromLkInput = v => new Date(v + ':00+05:30').toISOString()
-const nowLkInput = () => toLkInput(new Date().toISOString())
-const fmtDT = isoStr => new Date(isoStr).toLocaleString('en-GB', {
-  timeZone: 'Asia/Colombo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
-})
 
 const deptName = s => DEPTS.find(d => d.slug === s)?.name || s
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -955,6 +946,8 @@ function ProjectsPage() {
   const [quickMsg, setQuickMsg] = useState(null)
   const [quickBusy, setQuickBusy] = useState(false)
   const longPressTimer = useRef(null)
+  const longPressFired = useRef(false) // a long-press just opened quick-pay, so ignore the click that follows it
+  const [supOpen, setSupOpen] = useState({}) // "category||supplier" -> opened? (suppliers start rolled up)
   const [msg, setMsg] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1058,6 +1051,22 @@ function ProjectsPage() {
   // const grandTotal = rows.reduce((t, r) => t + Number(r.cost), 0)
   const toggleCat = name => setCollapsed(c => ({ ...c, [name]: !c[name] }))
 
+  // suppliers / workers roll up too. While searching, a supplier whose own name matches opens by itself.
+  const supKey = (catName, supName) => `${catName}||${supName}`
+  const supIsOpen = (catName, supName) => {
+    const q = search.trim().toLowerCase()
+    return supOpen[supKey(catName, supName)] ?? (!!q && supName.toLowerCase().includes(q))
+  }
+  const toggleSup = (catName, supName) => {
+    if (longPressFired.current) { longPressFired.current = false; return }
+    setSupOpen(o => ({ ...o, [supKey(catName, supName)]: !supIsOpen(catName, supName) }))
+  }
+  const setAllSup = (catName, cat, open) => setSupOpen(o => {
+    const n = { ...o }
+    for (const sName of cat.suppliers.keys()) n[supKey(catName, sName)] = open
+    return n
+  })
+
   // the printer icons now open an in-app preview (with Print + Close buttons)
   const printCategory = catName => { setPrintSup(null); setPrintCat(catName) }
   const printSupplier = (catName, supName) => { setPrintCat(null); setPrintSup({ cat: catName, sup: supName }) }
@@ -1103,7 +1112,8 @@ function ProjectsPage() {
   }
 
   const startLongPress = (catName, supName, supplierId) => {
-    longPressTimer.current = setTimeout(() => openQuickPay(catName, supName, supplierId), 500)
+    longPressFired.current = false
+    longPressTimer.current = setTimeout(() => { longPressFired.current = true; openQuickPay(catName, supName, supplierId) }, 500)
   }
   const cancelLongPress = () => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null } }
 
@@ -1129,7 +1139,7 @@ function ProjectsPage() {
             className="input w-full pr-9"
             placeholder="Search category or supplier / worker…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setSupOpen({}) }}
           />
           {search && (
             <button type="button" onClick={() => setSearch('')}
@@ -1177,7 +1187,13 @@ function ProjectsPage() {
                       </ResponsiveContainer>
                     </div>
                   )}
-                  {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => (
+                  {cat.suppliers.size > 1 && (
+                    <div className="no-print flex justify-end gap-3 text-xs">
+                      <button type="button" className="font-medium text-ink/60 underline" onClick={() => setAllSup(catName, cat, true)}>Expand all</button>
+                      <button type="button" className="font-medium text-ink/60 underline" onClick={() => setAllSup(catName, cat, false)}>Collapse all</button>
+                    </div>
+                  )}
+                  {[...cat.suppliers.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([supName, sup]) => { const isOpen = supIsOpen(catName, supName); return (
                     <div key={supName} className="rounded-md bg-paper p-2.5 select-none"
                       onPointerDown={() => startLongPress(catName, supName, sup.entries[0]?.supplier_id)}
                       onPointerUp={cancelLongPress}
@@ -1185,8 +1201,15 @@ function ProjectsPage() {
                       onPointerCancel={cancelLongPress}
                       onContextMenu={e => e.preventDefault()}
                     >
-                      <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold">{supName}</p>
+                      <div className={`flex items-center justify-between gap-2 ${isOpen ? 'mb-1.5' : ''}`}>
+                        <button type="button" onClick={() => toggleSup(catName, supName)} aria-expanded={isOpen}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                          <ChevronRight size={16} className={`shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-semibold">{supName}</span>
+                            <span className="block text-xs text-ink/60">{sup.entries.length} payment{sup.entries.length === 1 ? '' : 's'}</span>
+                          </span>
+                        </button>
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
                           <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printSupplier(catName, supName)}
@@ -1195,7 +1218,7 @@ function ProjectsPage() {
                           </button>
                         </div>
                       </div>
-                      <div className="space-y-2">
+                      {isOpen && <div className="space-y-2">
                         {sup.entries.slice().sort((a, b) => a.expense_date.localeCompare(b.expense_date) || a.id - b.id).map(r => (
                           <div key={r.id} className="border-b border-ink/5 pb-2 text-sm last:border-0 last:pb-0">
                             <div className="flex items-start justify-between gap-2">
@@ -1214,9 +1237,9 @@ function ProjectsPage() {
                             </div>
                           </div>
                         ))}
-                      </div>
+                      </div>}
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </div>
@@ -1454,254 +1477,6 @@ function ProjectsPage() {
   )
 }
 
-/* ───────────── Credits (admin only) ───────────── */
-function CreditsPage() {
-  const blank = () => ({ direction: 'GIVEN', party_name: '', amount: '', credit_date: nowLkInput(), due_at: '', remind_before_hours: '24', note: '', repeat_monthly: false, monthly_amount: '' })
-  const [rows, setRows] = useState([])
-  const [tab, setTab] = useState('GIVEN') // GIVEN = money people owe us, TAKEN = money we owe
-  const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [f, setF] = useState(blank)
-  const [payFor, setPayFor] = useState(null) // the credit that is receiving a (part-)payment
-  const [pf, setPf] = useState({ amount: '', paid_at: '', note: '' })
-  const [msg, setMsg] = useState(null)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  const load = useCallback(async () => {
-    setErr('')
-    try { setRows(await (await call('/api/credits')).json()) }
-    catch (e) { setErr(e.status ? e.message : 'Cannot reach the server. Check your connection.') }
-  }, [])
-  useEffect(() => { load() }, [load])
-
-  const now = Date.now()
-  const isOverdue = r => !r.is_settled && !r.repeat_monthly && new Date(r.due_at).getTime() < now
-  const sumOpen = dir => rows.filter(r => r.direction === dir && !r.is_settled).reduce((s, r) => s + r.balance, 0)
-  const list = rows
-    .filter(r => r.direction === tab)
-    .sort((a, b) => (a.is_settled - b.is_settled) || (new Date(a.next_due_at) - new Date(b.next_due_at)))
-  const names = [...new Set(rows.map(r => r.party_name))]
-
-  const openNew = () => { setEditing(null); setF({ ...blank(), direction: tab }); setMsg(null); setOpen(true) }
-  const openEdit = r => {
-    setEditing(r)
-    setF({ direction: r.direction, party_name: r.party_name, amount: String(r.amount), credit_date: toLkInput(r.credit_date),
-      due_at: toLkInput(r.due_at), remind_before_hours: String(r.remind_before_hours), note: r.note || '',
-      repeat_monthly: r.repeat_monthly, monthly_amount: r.monthly_amount ? String(r.monthly_amount) : '' })
-    setMsg(null); setOpen(true)
-  }
-
-  const submit = async e => {
-    e.preventDefault(); setMsg(null)
-    const amount = parseFloat(f.amount)
-    if (!f.party_name.trim()) return setMsg({ t: 'err', m: 'Enter the person / company name.' })
-    if (!(amount > 0)) return setMsg({ t: 'err', m: 'Amount must be greater than 0.' })
-    if (!f.credit_date || !f.due_at) return setMsg({ t: 'err', m: 'Choose both the credit date/time and the due date/time.' })
-    if (f.due_at < f.credit_date) return setMsg({ t: 'err', m: 'Due date/time cannot be before the credit date/time.' })
-    const monthlyAmount = parseFloat(f.monthly_amount)
-    if (f.repeat_monthly && f.monthly_amount && !(monthlyAmount > 0)) return setMsg({ t: 'err', m: 'Monthly amount must be greater than 0.' })
-    const body = { direction: f.direction, party_name: f.party_name.trim(), amount, credit_date: fromLkInput(f.credit_date),
-      due_at: fromLkInput(f.due_at), remind_before_hours: Number(f.remind_before_hours), note: f.note.trim() || null,
-      repeat_monthly: f.repeat_monthly, monthly_amount: f.repeat_monthly && monthlyAmount > 0 ? monthlyAmount : null }
-    setBusy(true)
-    try {
-      if (editing) await call(`/api/credits/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
-      else await call('/api/credits', { method: 'POST', body: JSON.stringify(body) })
-      setTab(f.direction); setOpen(false); await load()
-    } catch (e) { setMsg({ t: 'err', m: e.status ? e.message : 'Cannot reach the server. Check your connection.' }) }
-    setBusy(false)
-  }
-
-  const remove = async r => {
-    if (!window.confirm(`Delete the ${money(r.amount)} credit with ${r.party_name}? Its payments are deleted too.`)) return
-    try { await call(`/api/credits/${r.id}`, { method: 'DELETE' }); await load() }
-    catch (e) { setErr(e.status ? e.message : 'Could not delete. Check your connection.') }
-  }
-
-  const openPay = r => { setPayFor(r); setPf({ amount: String(r.balance), paid_at: nowLkInput(), note: '' }); setMsg(null) }
-  const submitPay = async e => {
-    e.preventDefault(); setMsg(null)
-    const amount = parseFloat(pf.amount)
-    if (!(amount > 0)) return setMsg({ t: 'err', m: 'Amount must be greater than 0.' })
-    if (amount > payFor.balance) return setMsg({ t: 'err', m: `More than the remaining balance (${money(payFor.balance)}).` })
-    setBusy(true)
-    try {
-      await call(`/api/credits/${payFor.id}/payments`, { method: 'POST',
-        body: JSON.stringify({ amount, paid_at: fromLkInput(pf.paid_at || nowLkInput()), note: pf.note.trim() || null }) })
-      setPayFor(null); await load()
-    } catch (e) { setMsg({ t: 'err', m: e.status ? e.message : 'Cannot reach the server. Check your connection.' }) }
-    setBusy(false)
-  }
-  const removePayment = async p => {
-    if (!window.confirm(`Remove this ${money(p.amount)} payment?`)) return
-    try { await call(`/api/credits/payments/${p.id}`, { method: 'DELETE' }); await load() }
-    catch (e) { setErr(e.status ? e.message : 'Could not remove. Check your connection.') }
-  }
-
-  const badge = r => {
-    if (r.is_settled) return { cls: 'bg-emerald-100 text-emerald-800', t: 'SETTLED' }
-    if (isOverdue(r)) return { cls: 'bg-red-100 text-red-800', t: 'OVERDUE' }
-    if (new Date(r.next_due_at).getTime() - now < 86400000) return { cls: 'bg-amber-100 text-amber-900', t: 'DUE SOON' }
-    if (r.repeat_monthly) return { cls: 'bg-sky-100 text-sky-800', t: 'MONTHLY' }
-    return { cls: 'bg-ink/10 text-ink/70', t: r.paid > 0 ? 'PARTIAL' : 'OPEN' }
-  }
-
-  return (
-    <main className="mx-auto max-w-3xl space-y-4 p-4 pb-10">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl"><Wallet size={24} className="shrink-0" />Credits</h1>
-        <button className="btn" onClick={openNew}>+ ADD CREDIT</button>
-      </div>
-      <Notice m={err && { t: 'err', m: err }} />
-
-      <div className="grid grid-cols-2 gap-3">
-        {[['GIVEN', 'To receive', 'text-emerald-700'], ['TAKEN', 'To pay', 'text-red-700']].map(([dir, label, col]) => (
-          <button key={dir} type="button" onClick={() => setTab(dir)}
-            className={`card text-left ${tab === dir ? 'ring-2 ring-accent' : 'hover:shadow-md'}`}>
-            <p className="text-xs font-semibold uppercase text-ink/60">{label}</p>
-            <p className={`text-xl font-bold ${col}`}>{money(sumOpen(dir))}</p>
-            <p className="text-xs text-ink/60">
-              {rows.filter(r => r.direction === dir && isOverdue(r)).length} overdue
-            </p>
-          </button>
-        ))}
-      </div>
-
-      <section className="space-y-3">
-        {!list.length && <p className="card py-6 text-center text-ink/60">
-          {tab === 'GIVEN' ? 'No credit given to anyone yet.' : 'No credit taken from anyone yet.'}</p>}
-        {list.map(r => {
-          const b = badge(r)
-          return (
-            <article key={r.id} className={`card space-y-2 ${r.is_settled ? 'opacity-60' : ''}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h3 className="font-semibold">{r.party_name}</h3>
-                  <p className="text-xs text-ink/60">{tab === 'GIVEN' ? 'Credit given' : 'Credit taken'}: {fmtDT(r.credit_date)}</p>
-                </div>
-                <span className={`rounded px-2 py-0.5 text-xs font-semibold ${b.cls}`}>{b.t}</span>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-sm">
-                <div><p className="text-xs text-ink/60">Amount</p><p className="font-semibold">{money(r.amount)}</p></div>
-                <div><p className="text-xs text-ink/60">Paid</p><p className="font-semibold">{money(r.paid)}</p></div>
-                <div><p className="text-xs text-ink/60">Balance</p><p className="font-bold">{money(r.balance)}</p></div>
-              </div>
-              <p className="text-sm"><span className="text-ink/60">{r.repeat_monthly ? 'Next instalment:' : 'Due:'}</span> <span className="font-medium">{fmtDT(r.next_due_at)}</span>
-                <span className="text-xs text-ink/50">{r.remind_before_hours ? ` · reminder ${r.remind_before_hours}h before` : ' · no early reminder'}</span></p>
-              {r.repeat_monthly && <p className="text-xs text-ink/60">Pays monthly{r.monthly_amount ? ` · ${money(r.monthly_amount)} per month` : ''} · reminder every month until fully paid</p>}
-              {r.note && <p className="text-sm text-ink/70">{r.note}</p>}
-              {r.payments.length > 0 && (
-                <ul className="divide-y divide-ink/10 rounded-md border border-ink/10 text-sm">
-                  {r.payments.map(p => (
-                    <li key={p.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
-                      <span>{money(p.amount)} <span className="text-xs text-ink/60">· {fmtDT(p.paid_at)}{p.note ? ` · ${p.note}` : ''}</span></span>
-                      <button type="button" className="rounded p-1 text-ink/50 hover:bg-ink/5" aria-label="Remove payment" onClick={() => removePayment(p)}><Trash2 size={14} /></button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex flex-wrap gap-2 pt-1">
-                {!r.is_settled && <button type="button" className="btn !px-3 !py-1.5 text-sm" onClick={() => openPay(r)}>
-                  {tab === 'GIVEN' ? '+ Received payment' : '+ Paid'}</button>}
-                <button type="button" className="btn-ghost" onClick={() => openEdit(r)}><Pencil size={14} />Edit</button>
-                <button type="button" className="btn-ghost" onClick={() => remove(r)}><Trash2 size={14} />Delete</button>
-              </div>
-            </article>
-          )
-        })}
-      </section>
-
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
-          <form role="dialog" aria-modal="true" aria-label="Credit" onSubmit={submit} noValidate
-            className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold uppercase">{editing ? 'Edit credit' : 'Add credit'}</h2>
-              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-sm font-medium">
-              {[['GIVEN', 'We gave credit', 'they owe us'], ['TAKEN', 'We took credit', 'we owe them']].map(([v, t, s]) => (
-                <label key={v} className={`cursor-pointer rounded-md border p-2 ${f.direction === v ? 'border-accent bg-accent/10' : 'border-ink/20'}`}>
-                  <input type="radio" className="mr-1" name="direction" checked={f.direction === v} onChange={() => setF(p => ({ ...p, direction: v }))} />{t}
-                  <span className="block text-xs font-normal text-ink/60">{s}</span>
-                </label>
-              ))}
-            </div>
-            <label className="block text-sm font-medium">{f.direction === 'GIVEN' ? 'Given to' : 'Taken from'}
-              <input className="input mt-1" list="credit-names" maxLength={150} value={f.party_name} placeholder="Person / company name"
-                onChange={e => setF(p => ({ ...p, party_name: e.target.value }))} /></label>
-            <datalist id="credit-names">{names.map(n => <option key={n} value={n} />)}</datalist>
-            <label className="block text-sm font-medium">Amount
-              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.amount}
-                onChange={e => setF(p => ({ ...p, amount: e.target.value }))} /></label>
-            <label className="block text-sm font-medium">Credit date &amp; time <span className="font-normal text-ink/60">(when the money changed hands)</span>
-              <input className="input mt-1" type="datetime-local" value={f.credit_date}
-                onChange={e => setF(p => ({ ...p, credit_date: e.target.value }))} /></label>
-            <label className="flex cursor-pointer items-start gap-2 rounded-md border border-ink/20 p-2 text-sm font-medium">
-              <input type="checkbox" className="mt-1" checked={f.repeat_monthly} onChange={e => setF(p => ({ ...p, repeat_monthly: e.target.checked }))} />
-              <span>Pays month by month
-                <span className="block text-xs font-normal text-ink/60">Not paid all at once. A reminder is sent every month, on the same day and time, until fully paid.</span></span>
-            </label>
-            {f.repeat_monthly && (
-              <label className="block text-sm font-medium">Amount per month <span className="font-normal text-ink/60">(optional)</span>
-                <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" value={f.monthly_amount}
-                  onChange={e => setF(p => ({ ...p, monthly_amount: e.target.value }))} /></label>
-            )}
-            <label className="block text-sm font-medium">{f.repeat_monthly ? 'First instalment date & time' : 'Due date & time'} <span className="font-normal text-ink/60">{f.repeat_monthly ? '(repeats every month)' : '(when it must be settled)'}</span>
-              <input className="input mt-1" type="datetime-local" value={f.due_at}
-                onChange={e => setF(p => ({ ...p, due_at: e.target.value }))} /></label>
-            <label className="block text-sm font-medium">Remind me
-              <select className="input mt-1" value={f.remind_before_hours} onChange={e => setF(p => ({ ...p, remind_before_hours: e.target.value }))}>
-                <option value="0">Only at the due time</option>
-                <option value="1">1 hour before + at due time</option>
-                <option value="3">3 hours before + at due time</option>
-                <option value="24">1 day before + at due time</option>
-                <option value="72">3 days before + at due time</option>
-                <option value="168">1 week before + at due time</option>
-              </select></label>
-            <label className="block text-sm font-medium">Note <span className="font-normal text-ink/60">(optional)</span>
-              <input className="input mt-1" maxLength={300} value={f.note} onChange={e => setF(p => ({ ...p, note: e.target.value }))} /></label>
-            <Notice m={msg} />
-            <div className="flex gap-2">
-              <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
-              <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save'}</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {payFor && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
-          <form role="dialog" aria-modal="true" aria-label="Payment" onSubmit={submitPay} noValidate
-            className="w-full max-w-md space-y-3 rounded-t-xl bg-white p-4 sm:rounded-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="font-semibold uppercase">{payFor.direction === 'GIVEN' ? 'Payment received' : 'Payment made'}</h2>
-                <p className="text-xs text-ink/60">{payFor.party_name} · balance {money(payFor.balance)}</p>
-              </div>
-              <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setPayFor(null)} aria-label="Close">×</button>
-            </div>
-            <label className="block text-sm font-medium">Amount
-              <input className="input mt-1" type="number" inputMode="decimal" min="0" step="0.01" autoFocus value={pf.amount}
-                onChange={e => setPf(p => ({ ...p, amount: e.target.value }))} /></label>
-            <label className="block text-sm font-medium">Date &amp; time
-              <input className="input mt-1" type="datetime-local" value={pf.paid_at}
-                onChange={e => setPf(p => ({ ...p, paid_at: e.target.value }))} /></label>
-            <label className="block text-sm font-medium">Note <span className="font-normal text-ink/60">(optional)</span>
-              <input className="input mt-1" maxLength={300} value={pf.note} onChange={e => setPf(p => ({ ...p, note: e.target.value }))} /></label>
-            <Notice m={msg} />
-            <div className="flex gap-2">
-              <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setPayFor(null)}>Cancel</button>
-              <button className="btn flex-1" disabled={busy}><Save size={18} />{busy ? 'Saving…' : 'Save'}</button>
-            </div>
-          </form>
-        </div>
-      )}
-    </main>
-  )
-}
-
 function AdminNav() {
   const link = ({ isActive }) => `flex flex-none items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
   const [pushEnabled, setPushEnabled] = useState(false)
@@ -1725,7 +1500,6 @@ function AdminNav() {
         <NavLink to="/admin/departments" className={link}><Building2 size={18} />DEPARTMENTS</NavLink>
         <NavLink to="/admin/damages" className={link}>DAMAGES</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
-        <NavLink to="/admin/credits" className={link}><Wallet size={18} />CREDIT</NavLink>
         <NavLink to="/admin/dashboard" className={link}><Settings size={18} />MANAGE</NavLink>
         {!pushEnabled && (
           <button type="button" onClick={handleEnable}
@@ -2129,7 +1903,6 @@ useEffect(() => {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="departments" element={<Departments />} />
           <Route path="projects" element={<ProjectsPage />} />
-          <Route path="credits" element={<CreditsPage />} />
           <Route path="damages" element={<DamagesHome />} />
         </Route>
         {Object.keys(PAGES).map(p => <Route key={p} path={`/department/${p}`} element={<DepartmentPage page={p} />} />)}

@@ -1,18 +1,6 @@
-import calendar
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
-from sqlalchemy import Column, Integer, String, Date, Numeric, DateTime, Boolean, ForeignKey, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, Date, Numeric, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from database import Base
-
-LK = timezone(timedelta(hours=5, minutes=30))  # Sri Lanka time, no daylight saving
-
-
-def add_months(dt, k):
-    """dt moved forward k months, keeping the day (31st -> last day of a short month)."""
-    m = dt.month - 1 + k
-    y, m = dt.year + m // 12, m % 12 + 1
-    return dt.replace(year=y, month=m, day=min(dt.day, calendar.monthrange(y, m)[1]))
 
 
 class Department(Base):
@@ -116,68 +104,4 @@ class PushSubscription(Base):
     p256dh = Column(String(200), nullable=False)
     auth = Column(String(100), nullable=False)
     label = Column(String(60))  # which admin/device, optional
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-class Credit(Base):
-    """Money lent out (GIVEN = they owe us) or money borrowed (TAKEN = we owe them)."""
-    __tablename__ = "credits"
-    id = Column(Integer, primary_key=True)
-    direction = Column(String(5), nullable=False, index=True)          # GIVEN | TAKEN
-    party_name = Column(String(150), nullable=False, index=True)
-    amount = Column(Numeric(14, 2), nullable=False)
-    credit_date = Column(DateTime(timezone=True), nullable=False)      # when the money changed hands
-    due_at = Column(DateTime(timezone=True), nullable=False, index=True)  # when it must be settled
-    remind_before_hours = Column(Integer, nullable=False, default=24, server_default="24")
-    note = Column(String(300))
-    notified_before = Column(Boolean, nullable=False, default=False, server_default="false")
-    notified_due = Column(Boolean, nullable=False, default=False, server_default="false")
-    last_overdue_on = Column(Date)                                     # one overdue nudge per day
-    repeat_monthly = Column(Boolean, nullable=False, default=False, server_default="false")  # pays in monthly instalments
-    monthly_amount = Column(Numeric(14, 2))                            # expected instalment (optional)
-    last_due_k = Column(Integer, nullable=False, default=-1, server_default="-1")     # last monthly "due" alert sent
-    last_before_k = Column(Integer, nullable=False, default=-1, server_default="-1")  # last monthly "coming up" alert sent
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    payments = relationship("CreditPayment", cascade="all, delete-orphan", lazy="selectin",
-                            order_by="CreditPayment.paid_at")
-
-    @property
-    def paid(self):
-        return sum((p.amount for p in self.payments), Decimal("0"))
-
-    @property
-    def balance(self):
-        return self.amount - self.paid
-
-    @property
-    def is_settled(self):
-        return self.balance <= 0
-
-    def occurrence(self, k):
-        """The k-th due moment. One-off credits only have k = 0; monthly ones repeat every month."""
-        due = self.due_at if self.due_at.tzinfo else self.due_at.replace(tzinfo=timezone.utc)
-        return add_months(due.astimezone(LK), k)
-
-    def current_k(self, now):
-        """Index of the latest monthly due moment that has already passed (-1 = none yet)."""
-        k = -1
-        while self.occurrence(k + 1) <= now:
-            k += 1
-        return k
-
-    @property
-    def next_due_at(self):
-        if not self.repeat_monthly:
-            return self.due_at
-        return self.occurrence(self.current_k(datetime.now(timezone.utc)) + 1)
-
-
-class CreditPayment(Base):
-    """A (part-)repayment against a credit."""
-    __tablename__ = "credit_payments"
-    id = Column(Integer, primary_key=True)
-    credit_id = Column(Integer, ForeignKey("credits.id", ondelete="CASCADE"), nullable=False, index=True)
-    amount = Column(Numeric(14, 2), nullable=False)
-    paid_at = Column(DateTime(timezone=True), nullable=False)
-    note = Column(String(300))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
