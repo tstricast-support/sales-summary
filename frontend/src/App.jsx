@@ -47,6 +47,11 @@ const PIE_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#089
 
 const shortMoney = n => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 const sriDate = isoStr => { const [y, m, d] = isoStr.split('-'); return `${d}/${m}/${y}` }
+// light green for Saturday, light red for Sunday (used for table rows)
+const rowTint = isoStr => {
+  const g = new Date(isoStr + 'T00:00:00Z').getUTCDay()
+  return g === 6 ? 'bg-green-100' : g === 0 ? 'bg-red-100' : ''
+}
 const within24h = createdAt => createdAt && (Date.now() - new Date(createdAt).getTime()) < 86400000
 const store = {
   get: (k, f) => { try { return JSON.parse(localStorage.getItem(k)) ?? f } catch { return f } },
@@ -428,7 +433,7 @@ useEffect(() => {
                 <th className="py-2">Date</th><th className="text-right">Sales</th><th className="text-right">Collection</th><th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.record_date} className="border-b border-ink/5 hover:bg-ink/5">
+                <tr key={r.record_date} className={`border-b border-ink/5 hover:brightness-95 ${rowTint(r.record_date)}`}>
                   <td className="cursor-pointer py-2 whitespace-nowrap" onClick={() => openEntry(r.record_date)}>{r.record_date}</td>
                   <td className="text-right">{money(r.sales_amount)}</td>
                   <td className="text-right">{money(r.collection_amount)}</td>
@@ -805,7 +810,7 @@ function DamagePage({ slug }) {
                 <th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
               <tbody>
                 {filteredRows.map(r => (
-                  <tr key={r.id} className="border-b border-ink/5 hover:bg-ink/5">
+                  <tr key={r.id} className={`border-b border-ink/5 hover:brightness-95 ${rowTint(r.record_date)}`}>
                     <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
                     {series.map(s => <td key={s.key} className="text-right">{money(r[s.field])}</td>)}
                     <td className="pl-4">{r.submitted_by}</td>
@@ -860,8 +865,25 @@ function DamagePage({ slug }) {
                 <h2 className="font-semibold uppercase">{editing ? 'Edit Damage Entry' : 'Add Damage Entry'} – {deptName(slug)}</h2>
                 <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setOpen(false)} aria-label="Close">×</button>
               </div>
-              <label className="block text-sm font-medium">Date
-                <input className="input mt-1" type="date" max={todayStr} value={date} onChange={e => setDate(e.target.value)} required /></label>
+              <div>
+                  <p className="mb-1 text-sm font-medium">Date <span className="font-normal text-ink/60">— {date}</span></p>
+                  <Calendar
+                    value={new Date(date + 'T00:00:00')}
+                    onChange={d => setDate(iso(d))}
+                    maxDate={new Date()}
+                    locale="en-GB"
+                    calendarType="iso8601"
+                    className="mini-cal"
+                    tileClassName={({ date: d, view }) => {
+                      if (view !== 'month') return null
+                      const cls = []
+                      if (rows.some(x => x.record_date === iso(d))) cls.push('has-rec')
+                      if (d.getDay() === 6) cls.push('sat-col')
+                      if (d.getDay() === 0) cls.push('sun-col')
+                      return cls.join(' ')
+                    }}
+                  />
+                </div>
               {isPhoto ? (
                 <>
                   <label className="block text-sm font-medium">Printing damage

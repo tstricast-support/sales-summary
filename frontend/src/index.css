@@ -15,15 +15,18 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
 .mini-cal .react-calendar__tile--now { background: #ccfbf1; border-radius: 6px; }
 .mini-cal .react-calendar__month-view__weekdays__weekday abbr { text-decoration: none; }
 
-/* Saturday column green, Sunday column red */
-.mini-cal .sat-col, .mini-cal .sat-col abbr { color: #0f766e; }
-.mini-cal .sun-col, .mini-cal .sun-col abbr { color: #c2410c; }
+/* Saturday column light green, Sunday column light red */
+.mini-cal .react-calendar__tile.sat-col { background: #dcfce7; color: #0f766e; }
+.mini-cal .react-calendar__tile.sun-col { background: #fee2e2; color: #b91c1c; }
+.mini-cal .react-calendar__tile.sat-col:enabled:hover { background: #bbf7d0; }
+.mini-cal .react-calendar__tile.sun-col:enabled:hover { background: #fecaca; }
+.mini-cal .react-calendar__tile:disabled { opacity: .45; }
+/* weekday header cells (iso8601 = Mon first, so 6th = Sat, 7th = Sun) */
+.mini-cal .react-calendar__month-view__weekdays__weekday:nth-child(6) { background: #dcfce7; color: #0f766e; }
+.mini-cal .react-calendar__month-view__weekdays__weekday:nth-child(7) { background: #fee2e2; color: #b91c1c; }
+.mini-cal .react-calendar__month-view__weekdays__weekday abbr { color: inherit; }
 .mini-cal .react-calendar__tile--active.sat-col,
 .mini-cal .react-calendar__tile--active.sun-col { color: #fff; }
-
-/* Green dot under any day that already has an entry */
-.mini-cal .has-rec::after { content: ''; position: absolute; bottom: 2px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 9999px; background: #0f766e; }
-.mini-cal .react-calendar__tile--active.has-rec::after { background: #5eead4; }
 
 @media print {
   @page { size: A4; margin: 0; }
