@@ -28,6 +28,10 @@ body { @apply bg-paper text-ink font-sans antialiased; padding-top: env(safe-are
 .mini-cal .react-calendar__tile--active.sat-col,
 .mini-cal .react-calendar__tile--active.sun-col { color: #fff; }
 
+/* Dot under any day that already has an entry */
+.mini-cal .has-rec::after { content: ''; position: absolute; bottom: 2px; left: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 9999px; background: #15803d; }
+.mini-cal .react-calendar__tile--active.has-rec::after { background: #5eead4; }
+
 @media print {
   @page { size: A4; margin: 0; }
   body.printing-log * { visibility: hidden; }
