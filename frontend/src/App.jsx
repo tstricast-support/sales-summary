@@ -66,6 +66,20 @@ const rangeFor = kind => {
   return { start: iso(start), end: iso(end) }
 }
 
+// adds a placeholder row (zero values) for every PAST day in start..end that has no entry.
+// today is NOT added (the day is not over yet); weekends are included like any other day.
+const withMissingDays = (list, start, end, make) => {
+  const ok = /^\d{4}-\d{2}-\d{2}$/
+  const y = new Date(); y.setDate(y.getDate() - 1)
+  const last = end < iso(y) ? end : iso(y)
+  if (!ok.test(start || '') || !ok.test(last) || start > last) return list
+  const have = new Set(list.map(r => r.record_date))
+  const out = [...list]
+  const d = new Date(start + 'T00:00:00')
+  for (let s = start; s <= last; d.setDate(d.getDate() + 1), s = iso(d)) if (!have.has(s)) out.push(make(s))
+  return out
+}
+
 // fetch wrapper: network failure => error WITHOUT .status (treated as offline)
 async function call(path, opts = {}) {
   const res = await fetch(API + path, {
@@ -325,8 +339,11 @@ const totalRange = (() => {
       .map(r => ({ date: r.record_date.slice(5), Sales: Number(r.sales_amount), Collection: Number(r.collection_amount) }))
   })()
   const rangeLabel = totalRange.label
-  const rows = sourceHist.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
-    .sort((a, b) => a.record_date.localeCompare(b.record_date))
+  const rows = withMissingDays(
+    sourceHist.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end),
+    graphRange.start, graphRange.end,
+    d => ({ record_date: d, sales_amount: 0, collection_amount: 0, submitted_by: '', missing: true })
+  ).sort((a, b) => a.record_date.localeCompare(b.record_date))
   const seg = on => `rounded-md border px-3 py-1.5 text-sm font-medium ${on ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`
     const totalsBox = (
     <div ref={tRef} className="relative w-full sm:w-auto">
@@ -418,7 +435,7 @@ const totalRange = (() => {
                   <td className="cursor-pointer py-2 whitespace-nowrap" onClick={() => openEntry(r.record_date)}>{r.record_date}</td>
                   <td className="text-right">{money(r.sales_amount)}</td>
                   <td className="text-right">{money(r.collection_amount)}</td>
-                  <td className="pl-4">{r.submitted_by}</td>
+                  <td className="pl-4">{r.missing ? <span className="text-red-600">No entry</span> : r.submitted_by}</td>
                   <td className="pl-2 text-right">
                     {(isAdmin || within24h(r.created_at)) && r.id && <RowMenu onDelete={() => removeEntry(r)} />}
                   </td>
@@ -660,6 +677,7 @@ function DamagePage({ slug }) {
     setF({ printing: String(r.printing_damage), accubind: String(r.accubind_damage), binding: String(r.binding_damage), value: String(r.damage_value), by: r.submitted_by })
     setMsg(null); setOpen(true)
   }
+  const openAdd = d => { setEditing(null); setDate(d); setMsg(null); setOpen(true) }
   const graphRange = (() => {
     if (dgRange === 'custom') return { start: customFrom, end: customTo }
     if (dgRange === 'weekly') { const s = new Date(); s.setDate(s.getDate() - ((s.getDay() + 6) % 7)); return { start: iso(s), end: todayStr } }
@@ -672,6 +690,10 @@ function DamagePage({ slug }) {
 
   // both the graph AND the history table below use this same filtered set
   const filteredRows = rows.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
+  // table = real rows + a zero row for every past day with no entry (newest first)
+  const tableRows = withMissingDays(filteredRows, graphRange.start, graphRange.end,
+    d => ({ record_date: d, printing_damage: 0, accubind_damage: 0, binding_damage: 0, damage_value: 0, submitted_by: '', missing: true })
+  ).sort((a, b) => b.record_date.localeCompare(a.record_date) || (b.id || 0) - (a.id || 0))
 
   const chartData = (() => {
     const bucketByMonth = dgRange === 'yearly' || (dgRange === 'custom' && !customInvalid && (new Date(graphRange.end) - new Date(graphRange.start)) / 86400000 > 31)
@@ -790,17 +812,19 @@ function DamagePage({ slug }) {
                 {series.map(s => <th key={s.key} className="text-right">{s.key}</th>)}
                 <th className="pl-4">By</th><th className="pl-2 no-print" /></tr></thead>
               <tbody>
-                {filteredRows.map(r => (
-                  <tr key={r.id} className={`border-b border-ink/5 hover:brightness-95 ${rowTint(r.record_date)}`}>
-                    <td className="py-2 whitespace-nowrap">{sriDate(r.record_date)}</td>
+                {tableRows.map(r => (
+                  <tr key={r.id ?? 'missing-' + r.record_date} className={`border-b border-ink/5 hover:brightness-95 ${rowTint(r.record_date)}`}>
+                    <td className={`py-2 whitespace-nowrap ${r.missing ? 'cursor-pointer' : ''}`} onClick={() => r.missing && openAdd(r.record_date)}>{sriDate(r.record_date)}</td>
                     {series.map(s => <td key={s.key} className="text-right">{money(r[s.field])}</td>)}
-                    <td className="pl-4">{r.submitted_by}</td>
+                    <td className="pl-4">{r.missing ? <span className="text-red-600">No entry</span> : r.submitted_by}</td>
                     <td className="pl-2 text-right">
-                      {(fromAdmin || within24h(r.created_at)) && <RowMenu onEdit={() => openEdit(r)} onDelete={() => removeDamage(r)} />}
+                      {r.missing
+                        ? <button type="button" className="text-xs font-semibold underline" onClick={() => openAdd(r.record_date)}>+ Add</button>
+                        : (fromAdmin || within24h(r.created_at)) && <RowMenu onEdit={() => openEdit(r)} onDelete={() => removeDamage(r)} />}
                     </td>
                   </tr>
                 ))}
-                {!filteredRows.length && <tr><td colSpan={series.length + 3} className="py-6 text-center text-ink/60">No damage entries in this period.</td></tr>}
+                {!tableRows.length && <tr><td colSpan={series.length + 3} className="py-6 text-center text-ink/60">No damage entries in this period.</td></tr>}
               </tbody>
             </table>
           </div>
