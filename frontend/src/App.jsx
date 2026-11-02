@@ -154,15 +154,14 @@ function DeptPanel({ slug, defaultName = '', entryRef, totalsSlot }) {
   const [mode, setMode] = useState('day')
   const [date, setDate] = useState(todayStr)
   const [period, setPeriod] = useState({ month: todayStr.slice(0, 7), year: String(new Date().getFullYear()) })
-  const [range, setRange] = useState('monthly')
-  const [customFrom, setCustomFrom] = useState(todayStr.slice(0, 8) + '01')
-  const [customTo, setCustomTo] = useState(todayStr)
-  const [customHist, setCustomHist] = useState([])
   const [tMode, setTMode] = useState('month')
   const [tDate, setTDate] = useState(todayStr)
   const [tMonth, setTMonth] = useState(todayStr.slice(0, 7))
   const [tYear, setTYear] = useState(String(new Date().getFullYear()))
   const [tot, setTot] = useState({ sales: 0, collection: 0, days: 0 })
+  const [tFrom, setTFrom] = useState(todayStr.slice(0, 8) + '01')
+  const [tTo, setTTo] = useState(todayStr)
+  const [rangeHist, setRangeHist] = useState([])
   const [hist, setHist] = useState(() => store.get('hist:' + slug, []))
   const [f, setF] = useState({ sales: '', collection: '', by: defaultName || localStorage.getItem('by') || '' })
   const [msg, setMsg] = useState(null)
@@ -183,14 +182,7 @@ function DeptPanel({ slug, defaultName = '', entryRef, totalsSlot }) {
 
   useEffect(() => { setHist(store.get('hist:' + slug, [])); setToast(null); refresh() }, [slug, refresh])
 
-  useEffect(() => {
-    if (range !== 'custom' || !customFrom || !customTo || customFrom > customTo) return
-    let live = true
-    call(`/api/records?department=${slug}&start=${customFrom}&end=${customTo}`).then(r => r.json())
-      .then(d => live && setCustomHist(d))
-      .catch(() => live && setCustomHist(hist.filter(r => r.record_date >= customFrom && r.record_date <= customTo)))
-    return () => { live = false }
-  }, [range, slug, customFrom, customTo, hist])
+
 
   // prefill the form when an existing day is selected
   useEffect(() => {
@@ -278,6 +270,7 @@ const openEntry = useCallback(d => { setMode('day'); setDate(d || todayStr); set
   // TOTAL section: work out the selected period (a week is Monday to Sunday)
 const totalRange = (() => {
   const d = new Date((tDate || todayStr) + 'T00:00:00')
+  if (tMode === 'custom') return { start: tFrom, end: tTo, label: `${tFrom} → ${tTo}` }
   if (tMode === 'yesterday') {
     const y = new Date(); y.setDate(y.getDate() - 1)
     return { start: iso(y), end: iso(y), label: `Yesterday (${iso(y)})` }
@@ -295,37 +288,29 @@ const totalRange = (() => {
   return { start: `${tYear}-01-01`, end: `${tYear}-12-31`, label: tYear }
 })()
 
-useEffect(() => {
+ useEffect(() => {
   const { start, end } = totalRange
   const ok = /^\d{4}-\d{2}-\d{2}$/
-  if (!ok.test(start) || !ok.test(end)) return
+  if (!ok.test(start) || !ok.test(end) || start > end) { setRangeHist([]); setTot({ sales: 0, collection: 0, days: 0 }); return }
   const sum = list => list.reduce((t, r) => ({ sales: t.sales + Number(r.sales_amount), collection: t.collection + Number(r.collection_amount), days: t.days + 1 }), { sales: 0, collection: 0, days: 0 })
+  const apply = l => { setRangeHist(l); setTot(sum(l)) }
   let live = true
   call(`/api/records?department=${slug}&start=${start}&end=${end}`).then(r => r.json())
-    .then(l => live && setTot(sum(l)))
-    .catch(() => live && setTot(sum(hist.filter(r => r.record_date >= start && r.record_date <= end)))) // offline fallback
+    .then(l => live && apply(l))
+    .catch(() => live && apply(hist.filter(r => r.record_date >= start && r.record_date <= end)))
   return () => { live = false }
 }, [slug, totalRange.start, totalRange.end, hist])
 
-  const customInvalid = range === 'custom' && (!customFrom || !customTo || customFrom > customTo)
+  
+  const customInvalid = tMode === 'custom' && (!tFrom || !tTo || tFrom > tTo)
 
-  // the date span currently driving BOTH the graph and Recent Entries below it
-  const graphRange = (() => {
-    if (range === 'custom') return { start: customFrom, end: customTo }
-    if (range === 'weekly') { const s = new Date(); s.setDate(s.getDate() - ((s.getDay() + 6) % 7)); return { start: iso(s), end: todayStr } } // Monday of THIS week -> today
-    if (range === 'monthly') { const s = new Date(); s.setDate(1); return { start: iso(s), end: todayStr } } // 1st of THIS month -> today
-    const s = new Date(); s.setMonth(0, 1) // Jan 1 of THIS year -> today
-    return { start: iso(s), end: todayStr }
-  })()
+  // graph + Recent Entries both follow the TOP filter
+  const graphRange = { start: totalRange.start, end: totalRange.end }
+  const sourceHist = rangeHist
 
-  // custom uses its own fetched dataset (can span further back than the 364-day `hist` cache)
-  const sourceHist = range === 'custom' ? customHist : hist
-
-  // chart data: weekly = last 7 days, monthly = last 30 days, yearly = per month (last 12),
-  // custom = user-selected range (bucketed by day if <=31 days, else by month, like yearly)
+  // up to 31 days = one point per day; longer (year / long custom range) = one point per month
   const chartData = (() => {
-    const bucketByMonth = range === 'yearly' ||
-      (range === 'custom' && !customInvalid && (new Date(graphRange.end) - new Date(graphRange.start)) / 86400000 > 31)
+    const bucketByMonth = !customInvalid && (new Date(graphRange.end) - new Date(graphRange.start)) / 86400000 > 31
     const inRange = sourceHist.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
     if (bucketByMonth) {
       const m = {}
@@ -334,13 +319,12 @@ useEffect(() => {
         m[k] = m[k] || { date: k, Sales: 0, Collection: 0 }
         m[k].Sales += Number(r.sales_amount); m[k].Collection += Number(r.collection_amount)
       })
-      return Object.values(m).sort((a, b) => a.date.localeCompare(b.date)).slice(-12)
+      return Object.values(m).sort((a, b) => a.date.localeCompare(b.date))
     }
     return inRange.sort((a, b) => a.record_date.localeCompare(b.record_date))
       .map(r => ({ date: r.record_date.slice(5), Sales: Number(r.sales_amount), Collection: Number(r.collection_amount) }))
   })()
-  const rangeLabel = { weekly: 'THIS WEEK', monthly: 'THIS MONTH', yearly: 'THIS YEAR', custom: `${graphRange.start} → ${graphRange.end}` }[range]
-  // Recent Entries follows the same filter as the graph above (weekly/monthly/yearly/custom) — no separate month picker
+  const rangeLabel = totalRange.label
   const rows = sourceHist.filter(r => r.record_date >= graphRange.start && r.record_date <= graphRange.end)
     .sort((a, b) => a.record_date.localeCompare(b.record_date))
   const seg = on => `rounded-md border px-3 py-1.5 text-sm font-medium ${on ? 'border-ink bg-ink text-white' : 'border-ink/20 bg-white'}`
@@ -361,7 +345,7 @@ useEffect(() => {
         <div className="absolute left-0 right-0 z-20 mt-2 space-y-3 rounded-md border border-ink/10 bg-white p-3 shadow-lg sm:left-auto sm:right-0 sm:w-72">
           <p className="text-xs font-semibold uppercase text-ink/60">{totalRange.label}</p>
           <div className="grid grid-cols-2 gap-2">
-          {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year'], ['yesterday', 'Yesterday']].map(([k, l]) => (
+          {[['date', 'Date'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year'], ['yesterday', 'Yesterday'], ['custom', 'Custom']].map(([k, l]) => (
             <button key={k} onClick={() => setTMode(k)} className={seg(tMode === k)}>{l}</button>
           ))}
         </div>
@@ -374,6 +358,17 @@ useEffect(() => {
           {tMode === 'year' && (
             <input type="number" className="input" min="2000" max={new Date().getFullYear()} value={tYear} onChange={e => setTYear(e.target.value)} />
           )}
+          {tMode === 'custom' && (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block min-w-0 text-xs font-medium">From
+                <input type="date" className="input mt-1 min-w-0" value={tFrom} max={tTo || todayStr}
+                  onChange={e => e.target.value && setTFrom(e.target.value)} /></label>
+              <label className="block min-w-0 text-xs font-medium">To
+                <input type="date" className="input mt-1 min-w-0" value={tTo} min={tFrom} max={todayStr}
+                  onChange={e => e.target.value && setTTo(e.target.value)} /></label>
+            </div>
+          )}
+          {customInvalid && <p className="text-xs text-red-700">From date must be on or before the To date.</p>}
           <p className="text-xs text-ink/60">{tot.days} day{tot.days === 1 ? '' : 's'} with entries.</p>
         </div>
       )}
@@ -392,21 +387,7 @@ useEffect(() => {
       <section className="card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold uppercase">Sales & Collection Trend – {rangeLabel}</h2>
-          <div className="flex flex-wrap gap-2">
-            {['weekly', 'monthly', 'yearly', 'custom'].map(k => <button key={k} onClick={() => setRange(k)} className={`${seg(range === k)} capitalize`}>{k}</button>)}
-          </div>
         </div>
-        {range === 'custom' && (
-          <div className="mb-3 grid grid-cols-2 gap-3 sm:max-w-md">
-            <label className="block min-w-0 text-xs font-medium">From
-              <input type="date" className="input mt-1 min-w-0" value={customFrom} max={customTo || todayStr}
-                onChange={e => e.target.value && setCustomFrom(e.target.value)} /></label>
-            <label className="block min-w-0 text-xs font-medium">To
-              <input type="date" className="input mt-1 min-w-0" value={customTo} min={customFrom} max={todayStr}
-                onChange={e => e.target.value && setCustomTo(e.target.value)} /></label>
-          </div>
-        )}
-        {customInvalid && <p className="mb-3 text-xs text-red-700">From date must be on or before the To date.</p>}
         {chartData.length ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -447,7 +428,7 @@ useEffect(() => {
             </tbody>
           </table>
         </div>
-        <p className="mt-2 text-xs text-ink/60">Tap a row to edit that day. Only the last 12 months are loaded.</p>
+        <p className="mt-2 text-xs text-ink/60">Tap a row to edit that day. Change the period using the Sales / Collection box at the top.</p>
       </section>
 
       {/* 3. TOTAL */}
