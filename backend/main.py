@@ -328,6 +328,10 @@ def save_bulk(data: schemas.BulkIn, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(422, str(e))
 
+@app.get("/api/report", dependencies=[Depends(admin_only)])
+def report(year: int = Query(ge=2000, le=2100), month: int = Query(ge=1, le=12), db: Session = Depends(get_db)):
+    return crud.report(db, year, month)
+
 @app.get("/api/summary", dependencies=[Depends(admin_only)])
 def summary(start: date, end: date, db: Session = Depends(get_db)):
     check_range(start, end)

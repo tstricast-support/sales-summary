@@ -86,6 +86,107 @@ def summary(db, start, end):
             "series": [{"date": str(d), "sales": float(a), "collection": float(c)} for d, a, c in series]}
 
 
+def report(db, year: int, month: int):
+    """Everything the REPORT page needs for one month, plus a 12-month trend for the year."""
+    import calendar
+    start = date(year, month, 1)
+    end = date(year, month, calendar.monthrange(year, month)[1])
+    py, pm = (year - 1, 12) if month == 1 else (year, month - 1)
+    pstart, pend = date(py, pm, 1), date(py, pm, calendar.monthrange(py, pm)[1])
+    f = lambda v: float(v or 0)
+    R, D, X, S, C, K = (models.DailyRecord, models.Department, models.ProjectExpense,
+                        models.ProjectSupplier, models.ProjectCategory, models.DamageRecord)
+    dmg_expr = K.printing_damage + K.accubind_damage + K.binding_damage + K.damage_value
+    names = {s: n for s, n in db.query(D.slug, D.name).all()}
+
+    def sales_between(a, b):
+        s, c = db.query(func.coalesce(func.sum(R.sales_amount), 0), func.coalesce(func.sum(R.collection_amount), 0)) \
+                 .filter(R.record_date.between(a, b)).one()
+        return f(s), f(c)
+
+    def damages_between(a, b):
+        return f(db.query(func.coalesce(func.sum(dmg_expr), 0)).filter(K.record_date.between(a, b)).scalar())
+
+    def expenses_between(a, b):
+        return f(db.query(func.coalesce(func.sum(X.cost), 0)).filter(X.expense_date.between(a, b)).scalar())
+
+    # ── sales & collections
+    dept_rows = (db.query(D.slug, D.name, func.coalesce(func.sum(R.sales_amount), 0), func.coalesce(func.sum(R.collection_amount), 0))
+                 .outerjoin(R, and_(R.department_id == D.id, R.record_date.between(start, end)))
+                 .group_by(D.id).order_by(D.id).all())
+    sales_series = (db.query(R.record_date, func.sum(R.sales_amount), func.sum(R.collection_amount))
+                    .filter(R.record_date.between(start, end)).group_by(R.record_date).order_by(R.record_date).all())
+    sales_total, coll_total = sales_between(start, end)
+    psales, pcoll = sales_between(pstart, pend)
+
+    # ── damages
+    dmg_dept = (db.query(K.department_slug, func.sum(dmg_expr)).filter(K.record_date.between(start, end))
+                .group_by(K.department_slug).all())
+    dmg_map = {s: f(v) for s, v in dmg_dept}
+    pb = (db.query(func.coalesce(func.sum(K.printing_damage), 0), func.coalesce(func.sum(K.accubind_damage), 0),
+                   func.coalesce(func.sum(K.binding_damage), 0))
+          .filter(K.record_date.between(start, end), K.department_slug == "i-photobook").one())
+    dmg_series = (db.query(K.record_date, func.sum(dmg_expr)).filter(K.record_date.between(start, end))
+                  .group_by(K.record_date).order_by(K.record_date).all())
+
+    # ── project expenses
+    exp_rows = (db.query(C.name, S.name, func.sum(X.cost), func.count(X.id))
+                .join(S, S.id == X.supplier_id).join(C, C.id == S.category_id)
+                .filter(X.expense_date.between(start, end)).group_by(C.name, S.name).all())
+    cats, sups = {}, []
+    for cn, sn, tot, cnt in exp_rows:
+        c = cats.setdefault(cn, {"name": cn, "total": 0.0, "count": 0})
+        c["total"] += f(tot); c["count"] += cnt
+        sups.append({"name": sn, "category": cn, "total": f(tot), "count": cnt})
+    exp_series = (db.query(X.expense_date, func.sum(X.cost)).filter(X.expense_date.between(start, end))
+                  .group_by(X.expense_date).order_by(X.expense_date).all())
+
+    # ── cheques (by release date)
+    ch = (db.query(models.Cheque.status, func.count(models.Cheque.id), func.coalesce(func.sum(models.Cheque.amount), 0))
+          .filter(models.Cheque.cheque_date.between(start, end)).group_by(models.Cheque.status).all())
+    cheques = {s: {"count": 0, "amount": 0.0} for s in ("PENDING", "DONE", "CANCELLED")}
+    for st, cnt, amt in ch:
+        cheques[st] = {"count": cnt, "amount": f(amt)}
+
+    # ── 12-month trend for the selected year
+    ystart, yend = date(year, 1, 1), date(year, 12, 31)
+    m_of = lambda col: func.extract("month", col)
+    trend = {m: {"month": m, "sales": 0.0, "collection": 0.0, "expenses": 0.0, "damages": 0.0} for m in range(1, 13)}
+    for m, s, c in (db.query(m_of(R.record_date), func.sum(R.sales_amount), func.sum(R.collection_amount))
+                    .filter(R.record_date.between(ystart, yend)).group_by(m_of(R.record_date)).all()):
+        trend[int(m)]["sales"], trend[int(m)]["collection"] = f(s), f(c)
+    for m, v in (db.query(m_of(X.expense_date), func.sum(X.cost))
+                 .filter(X.expense_date.between(ystart, yend)).group_by(m_of(X.expense_date)).all()):
+        trend[int(m)]["expenses"] = f(v)
+    for m, v in (db.query(m_of(K.record_date), func.sum(dmg_expr))
+                 .filter(K.record_date.between(ystart, yend)).group_by(m_of(K.record_date)).all()):
+        trend[int(m)]["damages"] = f(v)
+
+    return {
+        "year": year, "month": month, "start": str(start), "end": str(end),
+        "sales": {
+            "sales": sales_total, "collection": coll_total, "prev_sales": psales, "prev_collection": pcoll,
+            "departments": [{"slug": s, "name": n, "sales": f(a), "collection": f(c), "damages": dmg_map.get(s, 0.0)}
+                            for s, n, a, c in dept_rows],
+            "series": [{"date": str(d), "sales": f(a), "collection": f(c)} for d, a, c in sales_series],
+        },
+        "damages": {
+            "total": damages_between(start, end), "prev_total": damages_between(pstart, pend),
+            "departments": [{"slug": s, "name": names.get(s, s), "total": v} for s, v in sorted(dmg_map.items(), key=lambda x: -x[1])],
+            "photobook": {"printing": f(pb[0]), "accubind": f(pb[1]), "binding": f(pb[2])},
+            "series": [{"date": str(d), "total": f(v)} for d, v in dmg_series],
+        },
+        "expenses": {
+            "total": expenses_between(start, end), "prev_total": expenses_between(pstart, pend),
+            "count": sum(c["count"] for c in cats.values()),
+            "categories": sorted(cats.values(), key=lambda c: -c["total"]),
+            "suppliers": sorted(sups, key=lambda s: -s["total"])[:10],
+            "series": [{"date": str(d), "total": f(v)} for d, v in exp_series],
+        },
+        "cheques": cheques,
+        "trend": [trend[m] for m in range(1, 13)],
+    }
+
 def audit(db, start, end, slug=None):
     A = models.AuditLog
     q = db.query(A).filter(A.record_date.between(start, end))

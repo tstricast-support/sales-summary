@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation,useNavigate } from 'react-router-dom'
-import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp, FileText,Receipt, ImagePlus } from 'lucide-react'
+import { LineChart, Line, BarChart, Bar, AreaChart, Area, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList, ReferenceLine } from 'recharts'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp, FileText,Receipt, ImagePlus,ChevronLeft  } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -2027,6 +2027,348 @@ function ChequesPage({ standalone = false }) {
   )
 }
 
+/* ───────────── Reports (month by month) ───────────── */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+const MONTH_SHORT = MONTH_NAMES.map(m => m.slice(0, 3))
+const REP = { sales: '#2563eb', collection: '#16a34a', expenses: '#f59e0b', damages: '#dc2626' }
+const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n || 0))
+const pct = (a, b) => (b > 0 ? (a / b) * 100 : 0)
+
+// "▲ 12.5% vs last month" — green or red depending on whether up is good for that figure
+function Delta({ cur, prev, goodWhenUp = true }) {
+  if (!cur && !prev) return <span className="text-xs text-ink/40">No data</span>
+  if (!prev) return <span className="text-xs text-ink/50">No data last month</span>
+  const p = ((cur - prev) / prev) * 100
+  const flat = Math.abs(p) < 0.05
+  const good = (p >= 0) === goodWhenUp
+  return (
+    <span className={`text-xs font-medium ${flat ? 'text-ink/50' : good ? 'text-green-700' : 'text-red-600'}`}>
+      {p >= 0 ? '▲' : '▼'} {Math.abs(p).toFixed(1)}% vs last month
+    </span>
+  )
+}
+
+function Kpi({ label, value, color, className = '', children }) {
+  return (
+    <div className={`card !p-3 ${className}`} style={{ borderTop: `3px solid ${color}` }}>
+      <p className="text-xs font-semibold uppercase text-ink/60">{label}</p>
+      <p className="mt-1 truncate text-lg font-bold sm:text-xl">{money(value)}</p>
+      <div className="mt-0.5">{children}</div>
+    </div>
+  )
+}
+
+function ChartCard({ title, sub, empty, h = 260, className = '', children }) {
+  return (
+    <section className={`card ${className}`}>
+      <h3 className="text-sm font-semibold uppercase">{title}</h3>
+      {sub && <p className="text-xs text-ink/60">{sub}</p>}
+      {empty
+        ? <p className="py-12 text-center text-sm text-ink/50">No data for this month.</p>
+        : <div className="mt-2 w-full" style={{ height: h }}>{children}</div>}
+    </section>
+  )
+}
+
+function SectionTitle({ color, children }) {
+  return <h2 className="mt-2 flex items-center gap-2 text-base font-bold uppercase"><span className="h-4 w-1.5 rounded-full" style={{ background: color }} />{children}</h2>
+}
+
+function ReportPage() {
+  const now = todayLk()
+  const curY = Number(now.slice(0, 4)), curM = Number(now.slice(5, 7))
+  const [year, setYear] = useState(curY)
+  const [month, setMonth] = useState(curM)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [hidden, setHidden] = useState({}) // trend lines the user switched off by clicking the legend
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true); setErr('')
+    call(`/api/report?year=${year}&month=${month}`).then(r => r.json())
+      .then(d => { if (alive) setData(d) })
+      .catch(e => { if (alive) setErr(e.status ? e.message : 'Cannot reach the server. Check your connection.') })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [year, month])
+
+  const atLatest = year > curY || (year === curY && month >= curM)
+  const step = d => {
+    let m = month + d, y = year
+    if (m < 1) { m = 12; y-- } else if (m > 12) { m = 1; y++ }
+    setMonth(m); setYear(y)
+  }
+  const years = Array.from({ length: 5 }, (_, i) => curY - 4 + i)
+
+  // fill every day of the month so the daily charts always span 1..31
+  const days = new Date(year, month, 0).getDate()
+  const fillDays = (series, keys) => Array.from({ length: days }, (_, i) => {
+    const d = `${year}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`
+    const hit = series?.find(s => s.date === d)
+    return { day: i + 1, ...Object.fromEntries(keys.map(k => [k, hit ? hit[k] : 0])) }
+  })
+
+  const S = data?.sales, X = data?.expenses, K = data?.damages, CH = data?.cheques
+  const net = S ? S.collection - X.total : 0
+  const noSales = !S || (S.sales === 0 && S.collection === 0)
+  const tip = <Tooltip formatter={v => money(v)} />
+  const axis = { tick: { fontSize: 11 }, tickLine: false, axisLine: false }
+
+  // little auto-generated highlights
+  const bullets = []
+  if (S) {
+    if (S.sales > 0) bullets.push(`Collections are ${pct(S.collection, S.sales).toFixed(1)}% of sales this month.`)
+    const best = [...S.departments].sort((a, b) => b.sales - a.sales)[0]
+    if (best && best.sales > 0) bullets.push(`Top department by sales: ${best.name} (${money(best.sales)}).`)
+    if (X.categories[0]) bullets.push(`Biggest expense category: ${X.categories[0].name} — ${pct(X.categories[0].total, X.total).toFixed(0)}% of spending.`)
+    if (K.departments[0]) bullets.push(`Most damage: ${K.departments[0].name} (${money(K.departments[0].total)}).`)
+    if (S.collection > 0) bullets.push(net >= 0 ? `Collections exceeded project expenses by ${money(net)}.` : `Project expenses exceeded collections by ${money(-net)}.`)
+  }
+  const catTotal = X ? X.categories.reduce((t, c) => t + c.total, 0) : 0
+
+  return (
+    <main className="mx-auto max-w-5xl space-y-4 p-4 pb-10">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="flex items-center gap-2 text-xl font-bold uppercase sm:text-2xl"><TrendingUp size={24} className="shrink-0" />Reports</h1>
+        <div className="no-print flex flex-wrap items-center gap-2">
+          <button type="button" className="btn-ghost !px-2" onClick={() => step(-1)} aria-label="Previous month"><ChevronLeft size={18} /></button>
+          <select className="input !w-auto" value={month} onChange={e => setMonth(Number(e.target.value))} aria-label="Month">
+            {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+          <select className="input !w-auto" value={year} onChange={e => setYear(Number(e.target.value))} aria-label="Year">
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <button type="button" className="btn-ghost !px-2" onClick={() => step(1)} disabled={atLatest} aria-label="Next month"><ChevronRight size={18} /></button>
+          {!(year === curY && month === curM) && <button type="button" className="btn-ghost" onClick={() => { setYear(curY); setMonth(curM) }}>This month</button>}
+          <button type="button" className="btn-ghost" onClick={() => window.print()}><Printer size={16} />Print</button>
+        </div>
+      </div>
+      <Notice m={err && { t: 'err', m: err }} />
+      {!data && loading && <p className="py-16 text-center text-ink/60">Loading report…</p>}
+
+      {data && (
+        <div className={`space-y-4 transition-opacity ${loading ? 'opacity-50' : ''}`}>
+          <p className="text-sm text-ink/60">{MONTH_NAMES[month - 1]} {year} · {sriDate(data.start)} – {sriDate(data.end)}</p>
+
+          {/* KPI strip */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <Kpi label="Sales" value={S.sales} color={REP.sales}><Delta cur={S.sales} prev={S.prev_sales} /></Kpi>
+            <Kpi label="Collections" value={S.collection} color={REP.collection}>
+              <span className="block text-xs text-ink/60">{pct(S.collection, S.sales).toFixed(0)}% of sales</span>
+              <Delta cur={S.collection} prev={S.prev_collection} />
+            </Kpi>
+            <Kpi label="Project expenses" value={X.total} color={REP.expenses}>
+              <Delta cur={X.total} prev={X.prev_total} goodWhenUp={false} />
+            </Kpi>
+            <Kpi label="Damages" value={K.total} color={REP.damages}>
+              <Delta cur={K.total} prev={K.prev_total} goodWhenUp={false} />
+            </Kpi>
+            <Kpi label="Collections − expenses" value={net} color={net >= 0 ? '#0f766e' : '#b91c1c'} className="col-span-2 lg:col-span-1">
+              <span className="text-xs text-ink/60">{net >= 0 ? 'Surplus' : 'Shortfall'} this month</span>
+            </Kpi>
+          </div>
+
+          {bullets.length > 0 && (
+            <section className="card">
+              <h3 className="mb-1 text-sm font-semibold uppercase">Highlights</h3>
+              <ul className="list-disc space-y-0.5 pl-5 text-sm text-ink/80">{bullets.map(b => <li key={b}>{b}</li>)}</ul>
+            </section>
+          )}
+
+          {/* 12-month trend */}
+          <ChartCard title={`${year} — month by month`} sub="Tap a month to open it · tap a legend item to hide or show a line" h={300}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data.trend.map(t => {
+                const future = year > curY || (year === curY && t.month > curM) // months that haven't happened yet draw nothing
+                return { name: MONTH_SHORT[t.month - 1], sales: future ? null : t.sales, collection: future ? null : t.collection, expenses: future ? null : t.expenses, damages: future ? null : t.damages }
+              })} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
+                onClick={e => { const i = MONTH_SHORT.indexOf(e?.activeLabel); if (i >= 0) setMonth(i + 1) }} style={{ cursor: 'pointer' }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" {...axis} interval={0} />
+                <YAxis {...axis} width={48} tickFormatter={compact} />
+                {tip}
+                <Legend onClick={e => setHidden(h => ({ ...h, [e.dataKey]: !h[e.dataKey] }))} />
+                <ReferenceLine x={MONTH_SHORT[month - 1]} stroke="#94a3b8" strokeDasharray="4 4" />
+                <Line type="monotone" dataKey="sales" name="Sales" stroke={REP.sales} strokeWidth={2.5} dot={{ r: 3 }} hide={!!hidden.sales} />
+                <Line type="monotone" dataKey="collection" name="Collections" stroke={REP.collection} strokeWidth={2.5} dot={{ r: 3 }} hide={!!hidden.collection} />
+                <Line type="monotone" dataKey="expenses" name="Expenses" stroke={REP.expenses} strokeWidth={2.5} dot={{ r: 3 }} hide={!!hidden.expenses} />
+                <Line type="monotone" dataKey="damages" name="Damages" stroke={REP.damages} strokeWidth={2.5} dot={{ r: 3 }} hide={!!hidden.damages} />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* SALES & COLLECTIONS */}
+          <SectionTitle color={REP.sales}>Sales &amp; collections</SectionTitle>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ChartCard title="Daily sales vs collections" empty={noSales}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={fillDays(S.series, ['sales', 'collection'])} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="day" {...axis} interval={Math.ceil(days / 10) - 1} />
+                  <YAxis {...axis} width={48} tickFormatter={compact} />
+                  <Tooltip formatter={v => money(v)} labelFormatter={d => `${d} ${MONTH_SHORT[month - 1]}`} />
+                  <Legend />
+                  <Area type="monotone" dataKey="sales" name="Sales" stroke={REP.sales} fill={REP.sales} fillOpacity={0.18} strokeWidth={2} />
+                  <Area type="monotone" dataKey="collection" name="Collections" stroke={REP.collection} fill={REP.collection} fillOpacity={0.18} strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </ChartCard>
+            <ChartCard title="By department" sub="Sales and collections" empty={noSales}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={S.departments} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" {...axis} tickFormatter={compact} />
+                  <YAxis type="category" dataKey="name" {...axis} width={108} />
+                  {tip}
+                  <Legend />
+                  <Bar dataKey="sales" name="Sales" fill={REP.sales} radius={[0, 3, 3, 0]} />
+                  <Bar dataKey="collection" name="Collections" fill={REP.collection} radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </div>
+
+          {/* PROJECT EXPENSES */}
+          <SectionTitle color={REP.expenses}>Project payments &amp; expenses</SectionTitle>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ChartCard title="Expenses by category" sub={`${X.count} payment${X.count === 1 ? '' : 's'} · ${money(X.total)}`} empty={!X.categories.length} h={290}>
+              <div className="flex h-full flex-col">
+                <div className="min-h-0 flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RePieChart>
+                      <Pie data={X.categories} dataKey="total" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2}>
+                        {X.categories.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                      </Pie>
+                      {tip}
+                    </RePieChart>
+                  </ResponsiveContainer>
+                </div>
+                <ul className="max-h-24 space-y-0.5 overflow-y-auto text-xs">
+                  {X.categories.map((c, i) => (
+                    <li key={c.name} className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                      <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                      <span className="text-ink/60">{pct(c.total, catTotal).toFixed(0)}%</span>
+                      <span className="w-24 text-right font-medium">{money(c.total)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </ChartCard>
+            <ChartCard title="Top suppliers / workers" sub="Highest paid this month" empty={!X.suppliers.length} h={Math.max(260, X.suppliers.length * 32 + 40)}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={X.suppliers} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" {...axis} tickFormatter={compact} />
+                  <YAxis type="category" dataKey="name" {...axis} width={108} />
+                  <Tooltip formatter={v => money(v)} labelFormatter={(_, p) => p?.[0] ? `${p[0].payload.name} · ${p[0].payload.category}` : ''} />
+                  <Bar dataKey="total" name="Paid" fill={REP.expenses} radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+            <ChartCard title="Daily payments" empty={!X.series.length} className="lg:col-span-2" h={220}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={fillDays(X.series, ['total'])} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="day" {...axis} interval={Math.ceil(days / 16) - 1} />
+                  <YAxis {...axis} width={48} tickFormatter={compact} />
+                  <Tooltip formatter={v => money(v)} labelFormatter={d => `${d} ${MONTH_SHORT[month - 1]}`} />
+                  <Bar dataKey="total" name="Paid" fill={REP.expenses} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </div>
+
+          {/* DAMAGES */}
+          <SectionTitle color={REP.damages}>Damages</SectionTitle>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ChartCard title="Damage by department" empty={!K.departments.length} h={Math.max(200, K.departments.length * 44 + 40)}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={K.departments} layout="vertical" margin={{ top: 4, right: 44, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" {...axis} tickFormatter={compact} />
+                  <YAxis type="category" dataKey="name" {...axis} width={108} />
+                  {tip}
+                  <Bar dataKey="total" name="Damage" fill={REP.damages} radius={[0, 3, 3, 0]}>
+                    <LabelList dataKey="total" position="right" formatter={compact} style={{ fontSize: 11 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+            <ChartCard title="I Photobook damage types" sub="Printing · Accubind · Binding"
+              empty={!(K.photobook.printing + K.photobook.accubind + K.photobook.binding)} h={220}>
+              <ResponsiveContainer width="100%" height="100%">
+                <RePieChart>
+                  <Pie dataKey="value" nameKey="name" cx="50%" cy="52%" outerRadius={68} label={e => compact(e.value)}
+                    data={[{ name: 'Printing', value: K.photobook.printing }, { name: 'Accubind', value: K.photobook.accubind }, { name: 'Binding', value: K.photobook.binding }]}>
+                    {['#dc2626', '#f59e0b', '#7c3aed'].map(c => <Cell key={c} fill={c} />)}
+                  </Pie>
+                  {tip}
+                  <Legend />
+                </RePieChart>
+              </ResponsiveContainer>
+            </ChartCard>
+            <ChartCard title="Daily damage" empty={!K.series.length} className="lg:col-span-2" h={200}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={fillDays(K.series, ['total'])} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="day" {...axis} interval={Math.ceil(days / 16) - 1} />
+                  <YAxis {...axis} width={48} tickFormatter={compact} />
+                  <Tooltip formatter={v => money(v)} labelFormatter={d => `${d} ${MONTH_SHORT[month - 1]}`} />
+                  <Bar dataKey="total" name="Damage" fill={REP.damages} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </div>
+
+          {/* CHEQUES */}
+          <SectionTitle color="#7c3aed">Cheques released this month</SectionTitle>
+          <div className="grid grid-cols-3 gap-3">
+            {[['PENDING', 'Pending', 'text-amber-700'], ['DONE', 'Done', 'text-green-700'], ['CANCELLED', 'Cancelled', 'text-ink/50']].map(([k, label, cls]) => (
+              <div key={k} className="card !p-3">
+                <p className={`text-xs font-semibold uppercase ${cls}`}>{label}</p>
+                <p className="mt-1 text-lg font-bold">{CH[k].count}</p>
+                <p className="truncate text-xs text-ink/60">{money(CH[k].amount)}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* DEPARTMENT TABLE */}
+          <section className="card overflow-x-auto">
+            <h3 className="mb-2 text-sm font-semibold uppercase">Department summary</h3>
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead><tr className="border-b border-ink/10 text-xs uppercase text-ink/60">
+                <th className="py-1.5">Department</th><th className="py-1.5 text-right">Sales</th><th className="py-1.5 text-right">Collections</th>
+                <th className="py-1.5 text-right">Collected</th><th className="py-1.5 text-right">Damages</th>
+              </tr></thead>
+              <tbody>
+                {S.departments.map(d => (
+                  <tr key={d.slug} className="border-b border-ink/5 last:border-0">
+                    <td className="py-1.5 font-medium">{d.name}</td>
+                    <td className="py-1.5 text-right">{money(d.sales)}</td>
+                    <td className="py-1.5 text-right">{money(d.collection)}</td>
+                    <td className="py-1.5 text-right text-ink/70">{d.sales > 0 ? `${pct(d.collection, d.sales).toFixed(0)}%` : '—'}</td>
+                    <td className="py-1.5 text-right text-red-700">{money(d.damages)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-ink/20 font-bold">
+                  <td className="py-1.5">Total</td>
+                  <td className="py-1.5 text-right">{money(S.sales)}</td>
+                  <td className="py-1.5 text-right">{money(S.collection)}</td>
+                  <td className="py-1.5 text-right">{S.sales > 0 ? `${pct(S.collection, S.sales).toFixed(0)}%` : '—'}</td>
+                  <td className="py-1.5 text-right text-red-700">{money(K.total)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        </div>
+      )}
+    </main>
+  )
+}
+
 function AdminNav() {
   const link = ({ isActive }) => `flex flex-none items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${isActive ? 'bg-white/15' : 'hover:bg-white/10'}`
   const [pushEnabled, setPushEnabled] = useState(false)
@@ -2051,6 +2393,7 @@ function AdminNav() {
         <NavLink to="/admin/damages" className={link}>DAMAGES</NavLink>
         <NavLink to="/admin/projects" className={link}><Briefcase size={18} />PROJECT</NavLink>
         <NavLink to="/admin/cheques" className={link}><FileText size={18} />CHEQUE</NavLink>
+        <NavLink to="/admin/reports" className={link}><TrendingUp size={18} />REPORT</NavLink>
         <NavLink to="/admin/dashboard" className={link}><Settings size={18} />MANAGE</NavLink>
         {!pushEnabled && (
           <button type="button" onClick={handleEnable}
@@ -2455,6 +2798,7 @@ useEffect(() => {
           <Route path="departments" element={<Departments />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="cheques" element={<ChequesPage />} />
+          <Route path="reports" element={<ReportPage />} />
           <Route path="damages" element={<DamagesHome />} />
         </Route>
         <Route path="/hr/cheques" element={<ChequesPage standalone />} />
