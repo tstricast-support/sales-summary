@@ -167,6 +167,7 @@ class ProjectOut(BaseModel):
     cost: float
     expense_date: date
     description: str | None = None
+    bill_url: str | None = None
     updated_at: datetime | None = None
 
 class PushSubscriptionIn(BaseModel):

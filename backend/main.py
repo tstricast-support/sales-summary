@@ -1,13 +1,13 @@
 import asyncio, io, os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
-from fastapi import FastAPI, Depends, HTTPException, Header, Query
+from fastapi import FastAPI, Depends, HTTPException, Header, Query,File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from sqlalchemy.orm import Session
-import crud, models, schemas, notify
+import crud, models, schemas, notify, imagekit_store
 from database import engine, Base, get_db, SessionLocal
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
@@ -43,6 +43,7 @@ async def lifespan(app):
     with SessionLocal() as db:
         crud.seed_departments(db)
         crud.migrate_projects(db)
+        crud.migrate_project_bills(db)
         crud.migrate_audit_logs(db)
         crud.migrate_damages(db)
         crud.migrate_hr(db)
@@ -273,10 +274,40 @@ def edit_project(project_id: int, data: schemas.ProjectIn, db: Session = Depends
 @app.delete("/api/projects/{project_id}")
 def remove_project(project_id: int, db: Session = Depends(get_db)):
     try:
-        crud.delete_project(db, project_id)
+        imagekit_store.delete_file(crud.delete_project(db, project_id))
         return {"ok": True}
     except LookupError as e:
         raise HTTPException(404, str(e))
+
+MAX_BILL_BYTES = 10 * 1024 * 1024
+
+
+@app.post("/api/projects/{project_id}/bill", response_model=schemas.ProjectOut)
+def upload_project_bill(project_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(400, "Only image files are allowed")
+    data = file.file.read(MAX_BILL_BYTES + 1)
+    if len(data) > MAX_BILL_BYTES:
+        raise HTTPException(413, "Image is too large (max 10 MB)")
+    if not db.query(models.ProjectExpense).get(project_id):
+        raise HTTPException(404, "Project entry not found")
+    try:
+        url, file_id = imagekit_store.upload_bill(data, file.filename or "bill.jpg", f"bill-{project_id}")
+    except imagekit_store.ImageKitError as e:
+        raise HTTPException(502, str(e))
+    rec, old_file_id = crud.set_project_bill(db, project_id, url, file_id)
+    imagekit_store.delete_file(old_file_id)
+    return rec
+
+
+@app.delete("/api/projects/{project_id}/bill", response_model=schemas.ProjectOut)
+def remove_project_bill(project_id: int, db: Session = Depends(get_db)):
+    try:
+        rec, old_file_id = crud.set_project_bill(db, project_id, None, None)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    imagekit_store.delete_file(old_file_id)
+    return rec
 
 @app.post("/api/records/bulk")
 def save_bulk(data: schemas.BulkIn, db: Session = Depends(get_db)):

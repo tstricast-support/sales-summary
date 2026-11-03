@@ -80,6 +80,8 @@ class ProjectExpense(Base):
     cost = Column(Numeric(14, 2), nullable=False, default=0)
     expense_date = Column(Date, nullable=False, index=True)
     description = Column(String(300))
+    bill_url = Column(String(500))
+    bill_file_id = Column(String(100))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     supplier = relationship("ProjectSupplier")

@@ -277,7 +277,32 @@ def delete_project(db, project_id: int):
     rec = db.query(models.ProjectExpense).get(project_id)
     if not rec:
         raise LookupError("Project entry not found")
+        file_id = rec.bill_file_id
     db.delete(rec); db.commit()
+    return file_id
+
+
+def set_project_bill(db, project_id: int, url, file_id):
+    rec = db.query(models.ProjectExpense).get(project_id)
+    if not rec:
+        raise LookupError("Project entry not found")
+    old_file_id = rec.bill_file_id
+    rec.bill_url, rec.bill_file_id = url, file_id
+    db.commit(); db.refresh(rec)
+    return rec, old_file_id
+
+
+def migrate_project_bills(db):
+    """Adds the bill columns to project_expenses. Safe to run on every startup."""
+    insp = inspect(db.get_bind())
+    if "project_expenses" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("project_expenses")}
+    if "bill_url" not in cols:
+        db.execute(text("ALTER TABLE project_expenses ADD COLUMN bill_url VARCHAR(500)"))
+    if "bill_file_id" not in cols:
+        db.execute(text("ALTER TABLE project_expenses ADD COLUMN bill_file_id VARCHAR(100)"))
+    db.commit()
 
 
 def migrate_projects(db):

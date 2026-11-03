@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState,useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, Outlet, useSearchParams, useLocation,useNavigate } from 'react-router-dom'
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, LabelList } from 'recharts'
-import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp, FileText } from 'lucide-react'
+import { LayoutDashboard, Building2, Download, Printer, WifiOff, Save, CheckCircle2, AlertCircle, Lock, ChevronRight, ArrowLeft, Briefcase, Pencil, MoreVertical, Trash2, PieChart, Bell, Settings, TrendingUp, FileText,Receipt, ImagePlus } from 'lucide-react'
 import Calendar from 'react-calendar'
 import 'react-calendar/dist/Calendar.css'
 
@@ -93,6 +93,38 @@ async function call(path, opts = {}) {
     throw Object.assign(new Error(msg), { status: res.status })
   }
   return res
+}
+
+// ───── bill images (ImageKit) ─────
+const thumb = (url, w = 300) => `${url}${url.includes('?') ? '&' : '?'}tr=w-${w}`
+
+// phone photos are huge — shrink to max 1600px JPEG before uploading
+async function shrinkImage(file, max = 1600) {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file
+  try {
+    const bmp = await createImageBitmap(file)
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height))
+    const c = document.createElement('canvas')
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k)
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height)
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82))
+    return blob ? new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }) : file
+  } catch { return file }
+}
+
+// multipart upload (call() always sends JSON, so this one uses fetch directly)
+async function uploadBill(projectId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${API}/api/projects/${projectId}/bill`, {
+    method: 'POST', body: fd,
+    headers: { 'x-admin-key': localStorage.getItem('adminKey') || '', 'x-hr-key': localStorage.getItem('hrKey') || '' },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw Object.assign(new Error(body.detail || 'Upload failed'), { status: res.status })
+  }
+  return res.json()
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -954,6 +986,30 @@ function DamagesHome() {
   )
 }
 
+// file chooser used in both payment forms: shows a preview and lets the user remove it
+function BillPicker({ file, onChange, existingUrl }) {
+  const [preview, setPreview] = useState('')
+  useEffect(() => {
+    if (!file) { setPreview(''); return }
+    const u = URL.createObjectURL(file)
+    setPreview(u)
+    return () => URL.revokeObjectURL(u)
+  }, [file])
+  const shown = preview || (existingUrl ? thumb(existingUrl, 200) : '')
+  return (
+    <div className="text-sm font-medium">Bill photo <span className="font-normal text-ink/60">(optional)</span>
+      <div className="mt-1 flex items-center gap-3">
+        {shown && <img src={shown} alt="Bill preview" className="h-16 w-16 rounded-md border border-ink/10 object-cover" />}
+        <label className="btn-ghost cursor-pointer">
+          <ImagePlus size={16} />{file || existingUrl ? 'Change bill' : 'Add bill'}
+          <input type="file" accept="image/*" className="hidden"
+            onChange={e => { onChange(e.target.files?.[0] || null); e.target.value = '' }} />
+        </label>
+        {file && <button type="button" className="text-xs font-normal text-red-600 underline" onClick={() => onChange(null)}>Remove</button>}
+      </div>
+    </div>
+  )
+}
 
 function ProjectsPage() {
   const todayStr = iso(new Date())
@@ -987,6 +1043,12 @@ function ProjectsPage() {
   const [msg, setMsg] = useState(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [formFile, setFormFile] = useState(null)   // bill chosen in the + CREATE / edit form
+  const [quickFile, setQuickFile] = useState(null) // bill chosen in the + ADD PAYMENT form
+  const [billSup, setBillSup] = useState(null)     // { cat, sup } while the bills sheet is open
+  const [billView, setBillView] = useState(null)   // url of the bill shown full-screen
+  const [billBusy, setBillBusy] = useState(null)   // payment id currently uploading
+  const [billMsg, setBillMsg] = useState(null)
 
   const load = useCallback(async () => {
     setErr('')
@@ -1001,11 +1063,11 @@ function ProjectsPage() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  const openNew = () => { setEditing(null); setF(emptyForm); setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true) }
+  const openNew = () => { setEditing(null); setF(emptyForm); setFormFile(null); setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true) }
   const openEdit = r => {
     setEditing(r)
     setF({ category_id: String(r.category_id), supplier_id: String(r.supplier_id), cost: String(r.cost), expense_date: r.expense_date, description: r.description || '' })
-    setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true)
+     setFormFile(null); setNewCatMode(false); setNewSupMode(false); setMsg(null); setOpen(true)
   }
 
   // creating a category/supplier here immediately adds it to the select list, ready to pick next time
@@ -1044,9 +1106,17 @@ function ProjectsPage() {
     const body = { supplier_id: Number(f.supplier_id), cost, expense_date, description: f.description.trim() || null }
     setBusy(true)
     try {
-      if (editing) await call(`/api/projects/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
-      else await call('/api/projects', { method: 'POST', body: JSON.stringify(body) })
+            const res = editing
+        ? await call(`/api/projects/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) })
+        : await call('/api/projects', { method: 'POST', body: JSON.stringify(body) })
+      const saved = await res.json()
+      let upErr = ''
+      if (formFile) {
+        try { await uploadBill(saved.id, await shrinkImage(formFile)) }
+        catch (e) { upErr = 'Payment saved, but the bill could not be uploaded (' + (e.status ? e.message : 'no connection') + '). Tap the bill icon to retry.' }
+      }
       setOpen(false); await load()
+      if (upErr) setErr(upErr)
     } catch (e) { setMsg({ t: 'err', m: e.status ? e.message : 'Cannot reach the server. Check your connection.' }) }
     setBusy(false)
   }
@@ -1120,14 +1190,30 @@ function ProjectsPage() {
     setCollapsed(c => ({ ...c, [catName]: true })) // roll this category open
     setPieCat(p => (p === catName ? null : catName))
   }
+  
+    const attachBill = async (r, file) => {
+    setBillBusy(r.id); setBillMsg(null)
+    try { await uploadBill(r.id, await shrinkImage(file)); await load() }
+    catch (e) { setBillMsg({ t: 'err', m: e.status ? e.message : 'Upload failed. Check your connection.' }) }
+    setBillBusy(null)
+  }
+  const removeBill = async r => {
+    if (!window.confirm('Remove this bill image?')) return
+    setBillMsg(null)
+    try { await call(`/api/projects/${r.id}/bill`, { method: 'DELETE' }); await load() }
+    catch (e) { setBillMsg({ t: 'err', m: e.status ? e.message : 'Could not remove. Check your connection.' }) }
+  }
+
 
   const openQuickPay = (catName, supName, supplierId) => {
     setQuick({ supplierId, supplierName: supName, categoryName: catName })
+    setQuickFile(null)
     setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
   }
 
   const openQuickPayPicker = () => {
     setQuick({ pick: true, categoryId: '', supplierId: '', supplierName: '', categoryName: '' })
+    setQuickFile(null)
     setQuickCost(''); setQuickDate(todayStr); setQuickDesc(''); setQuickMsg(null)
     setQuickSupSearch(''); setSupListOpen(false)
   }
@@ -1139,10 +1225,17 @@ function ProjectsPage() {
     if (!quick.supplierId) return setQuickMsg({ t: 'err', m: 'Choose a supplier / worker.' })
     setQuickBusy(true)
     try {
-      await call('/api/projects', { method: 'POST', body: JSON.stringify({
+            const res = await call('/api/projects', { method: 'POST', body: JSON.stringify({
         supplier_id: quick.supplierId, cost, expense_date: quickDate || todayStr, description: quickDesc.trim() || null,
       }) })
+      const saved = await res.json()
+      let upErr = ''
+      if (quickFile) {
+        try { await uploadBill(saved.id, await shrinkImage(quickFile)) }
+        catch (e) { upErr = 'Payment saved, but the bill could not be uploaded (' + (e.status ? e.message : 'no connection') + '). Tap the bill icon to retry.' }
+      }
       setQuick(null); await load()
+      if (upErr) setErr(upErr)
     } catch (err) { setQuickMsg({ t: 'err', m: err.status ? err.message : 'Cannot reach the server. Check your connection.' }) }
     setQuickBusy(false)
   }
@@ -1248,6 +1341,11 @@ function ProjectsPage() {
                         </button>
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-semibold text-ink/80">{money(sup.total)}</p>
+                            <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => { setBillMsg(null); setBillSup({ cat: catName, sup: supName }) }}
+                            aria-label={`Bills for ${supName}`} title="View / add bills">
+                            <Receipt size={14} />
+                            {sup.entries.some(r => r.bill_url) && <span className="text-xs">{sup.entries.filter(r => r.bill_url).length}</span>}
+                          </button>
                           <button type="button" className="btn-ghost no-print !px-2 !py-1" onClick={() => printSupplier(catName, supName)}
                             aria-label={`Print ${supName} report`} title="Print A4 report for this supplier">
                             <Printer size={14} />
@@ -1268,6 +1366,10 @@ function ProjectsPage() {
                               </div>
                               <span className="flex shrink-0 items-center gap-2 py-1">
                                 <span className="font-medium">{money(r.cost)}</span>
+                                {r.bill_url && (
+                                  <button type="button" className="no-print rounded p-1 text-ink/50 hover:bg-ink/10 hover:text-ink" onClick={() => setBillView(r.bill_url)}
+                                    aria-label="View bill" title="View bill"><Receipt size={15} /></button>
+                                )}
                                 <span className="no-print"><RowMenu onEdit={() => openEdit(r)} onDelete={() => remove(r)} /></span>
                               </span>
                             </div>
@@ -1434,6 +1536,7 @@ function ProjectsPage() {
                 <input className="input mt-1 !w-auto" type="date" max={todayStr} value={f.expense_date}
                   onChange={e => setF({ ...f, expense_date: e.target.value })} /></label>
             </div>
+            <BillPicker file={formFile} onChange={setFormFile} existingUrl={editing?.bill_url} />
             <Notice m={msg} />
             <div className="flex gap-2">
               <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setOpen(false)}>Cancel</button>
@@ -1501,6 +1604,7 @@ function ProjectsPage() {
                 <input className="input mt-1 !w-auto" type="date" max={todayStr} value={quickDate}
                   onChange={e => setQuickDate(e.target.value)} /></label>
             </div>
+            <BillPicker file={quickFile} onChange={setQuickFile} />
             <Notice m={quickMsg} />
             <div className="flex gap-2">
               <button type="button" className="btn-ghost flex-1 justify-center" onClick={() => setQuick(null)}>Cancel</button>
@@ -1509,7 +1613,60 @@ function ProjectsPage() {
           </form>
         </div>
       )}
-    </main>
+    
+      {/* BILLS SHEET (receipt icon next to the printer icon) — view, add, replace or remove the bill of each payment */}
+      {billSup && (() => {
+        const list = rows
+          .filter(r => r.category_name === billSup.cat && r.supplier_name === billSup.sup)
+          .sort((a, b) => b.expense_date.localeCompare(a.expense_date) || b.id - a.id)
+        return (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4">
+            <div role="dialog" aria-modal="true" aria-label="Bills"
+              className="max-h-[92vh] w-full max-w-md space-y-3 overflow-y-auto rounded-t-xl bg-white p-4 sm:rounded-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold uppercase">Bills</h2>
+                  <p className="text-xs text-ink/60">{billSup.sup} · {billSup.cat}</p>
+                </div>
+                <button type="button" className="rounded p-1 text-2xl leading-none text-ink/60 hover:bg-ink/5" onClick={() => setBillSup(null)} aria-label="Close">×</button>
+              </div>
+              <Notice m={billMsg} />
+              {list.map(r => (
+                <div key={r.id} className="flex items-center gap-3 rounded-md bg-paper p-2.5">
+                  {r.bill_url
+                    ? <button type="button" onClick={() => setBillView(r.bill_url)} aria-label="View bill">
+                        <img src={thumb(r.bill_url, 200)} alt="Bill" className="h-16 w-16 rounded-md border border-ink/10 object-cover" />
+                      </button>
+                    : <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-md border border-dashed border-ink/20 text-ink/30"><Receipt size={22} /></div>}
+                  <div className="min-w-0 flex-1 text-sm">
+                    <p className="font-semibold">{money(r.cost)}</p>
+                    <p className="text-xs text-ink/60 [overflow-wrap:anywhere]">{sriDate(r.expense_date)}{r.description ? ` · ${r.description}` : ''}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <label className="btn-ghost cursor-pointer !px-2 !py-1 text-xs">
+                      <ImagePlus size={14} />{billBusy === r.id ? 'Uploading…' : r.bill_url ? 'Replace' : 'Add bill'}
+                      <input type="file" accept="image/*" className="hidden" disabled={billBusy === r.id}
+                        onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) attachBill(r, file) }} />
+                    </label>
+                    {r.bill_url && <button type="button" className="text-xs text-red-600 underline" onClick={() => removeBill(r)}>Remove</button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* FULL-SCREEN BILL VIEWER */}
+      {billView && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 p-4" onClick={() => setBillView(null)}>
+          <button type="button" className="absolute right-4 top-3 text-4xl leading-none text-white" onClick={() => setBillView(null)} aria-label="Close">×</button>
+          <img src={billView} alt="Bill" className="max-h-full max-w-full rounded-md object-contain" onClick={e => e.stopPropagation()} />
+          <a href={billView} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+            className="absolute bottom-4 rounded-md bg-white/90 px-3 py-1.5 text-sm font-medium">Open original</a>
+        </div>
+      )}
+      </main>
   )
 }
 
