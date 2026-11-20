@@ -200,7 +200,7 @@ function DeptPanel({ slug, defaultName = '', entryRef, totalsSlot }) {
   const [mode, setMode] = useState('day')
   const [date, setDate] = useState(todayStr)
   const [period, setPeriod] = useState({ month: todayStr.slice(0, 7), year: String(new Date().getFullYear()) })
-  const [tMode, setTMode] = useState('month')
+  const [tMode, setTMode] = useState(isAdmin ? 'date' : 'month')
   const [tDate, setTDate] = useState(todayStr)
   const [tMonth, setTMonth] = useState(todayStr.slice(0, 7))
   const [tYear, setTYear] = useState(String(new Date().getFullYear()))
@@ -572,6 +572,8 @@ const totalRange = (() => {
   )
 }
 
+
+
 /* ───────────── user page (single or combined departments) ───────────── */
 function DepartmentPage({ page }) {
   const { title, slugs } = PAGES[page]
@@ -580,6 +582,30 @@ function DepartmentPage({ page }) {
   const fromAdmin = useLocation().state?.admin || sp.get('admin') === '1'
   const entryRef = useRef(null)
   const [totalsSlot, setTotalsSlot] = useState(null)
+    const navigate = useNavigate()
+  const deptIdx = DEPTS.findIndex(d => d.slug === tab)
+  const prevDept = DEPTS[(deptIdx - 1 + DEPTS.length) % DEPTS.length]
+  const nextDept = DEPTS[(deptIdx + 1) % DEPTS.length]
+  const goDept = d => {
+    if (d.page === page) setTab(d.slug)   // I Lab <-> I Photobook share one page, just switch the tab
+    else navigate(`/department/${d.page}?tab=${d.slug}`, { state: { admin: true } })
+  }
+
+  // swipe (mobile): left = next department, right = previous
+  const touch = useRef(null)
+  const onTouchStart = e => {
+    if (!fromAdmin || e.touches.length !== 1) return
+    // don't hijack swipes on inputs, calendars, charts, dialogs or horizontally scrollable tables
+    if (e.target.closest('input, textarea, select, [role="dialog"], .react-calendar, .recharts-wrapper, .overflow-x-auto')) { touch.current = null; return }
+    touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+  const onTouchEnd = e => {
+    const s = touch.current; touch.current = null
+    if (!s) return
+    const dx = e.changedTouches[0].clientX - s.x, dy = e.changedTouches[0].clientY - s.y
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return   // too short or mostly vertical (normal scroll)
+    goDept(dx < 0 ? nextDept : prevDept)
+  }
 
   useEffect(() => {
   const link = document.querySelector('link[rel="manifest"]')
@@ -588,8 +614,20 @@ function DepartmentPage({ page }) {
   return () => { if (old) link?.setAttribute('href', old) }
 }, [page])
 
-  return (
-    <main className="mx-auto max-w-6xl space-y-4 p-4 pb-10">
+    return (
+    <main className="mx-auto max-w-6xl space-y-4 p-4 pb-10" style={{ touchAction: 'pan-y' }}
+      onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      {fromAdmin && (
+        <>
+          {/* desktop arrows (hidden on mobile, where swiping is used) */}
+          <button type="button" onClick={() => goDept(prevDept)} aria-label={`Previous: ${prevDept.name}`} title={prevDept.name}
+            className="no-print fixed left-3 top-1/2 z-10 hidden -translate-y-1/2 rounded-full border border-ink/20 bg-white p-2 shadow-md hover:bg-ink hover:text-white md:flex">
+            <ChevronLeft size={24} /></button>
+          <button type="button" onClick={() => goDept(nextDept)} aria-label={`Next: ${nextDept.name}`} title={nextDept.name}
+            className="no-print fixed right-3 top-1/2 z-10 hidden -translate-y-1/2 rounded-full border border-ink/20 bg-white p-2 shadow-md hover:bg-ink hover:text-white md:flex">
+            <ChevronRight size={24} /></button>
+        </>
+      )}
       {fromAdmin && (
         <Link to="/admin/departments" className="btn-ghost w-fit">
           <ArrowLeft size={16} />Back to home
@@ -2416,18 +2454,29 @@ function AdminShell() {
   )
 }
 
+// remembers the admin's home-page date filter while navigating into departments and back
+const FILTER_KEY = 'adminHomeFilter'
+const loadHomeFilter = () => {
+  try { return JSON.parse(sessionStorage.getItem(FILTER_KEY)) || {} } catch { return {} }
+}
+
 function Departments() {
   const todayStr = iso(new Date())
+  const saved = loadHomeFilter()
   const [open, setOpen] = useState(false)
-  const [kind, setKind] = useState('monthly')
-  const [from, setFrom] = useState(todayStr.slice(0, 8) + '01')
-  const [to, setTo] = useState(todayStr)
+  const [kind, setKind] = useState(saved.kind || 'today')
+  const [from, setFrom] = useState(saved.from || todayStr.slice(0, 8) + '01')
+  const [to, setTo] = useState(saved.to || todayStr)
   const [totals, setTotals] = useState({})
   const [tot, setTot] = useState({ sales: 0, collection: 0 })
 
   const range = kind === 'today' ? { start: todayStr, end: todayStr }
     : kind === 'custom' ? { start: from, end: to } : rangeFor(kind)
   const invalid = kind === 'custom' && (!from || !to || from > to)
+
+  useEffect(() => {
+    try { sessionStorage.setItem(FILTER_KEY, JSON.stringify({ kind, from, to })) } catch { /* storage blocked */ }
+  }, [kind, from, to])
 
   // one fetch drives BOTH the per-department cards and the total box below
   useEffect(() => {
@@ -2802,7 +2851,7 @@ useEffect(() => {
           <Route path="damages" element={<DamagesHome />} />
         </Route>
         <Route path="/hr/cheques" element={<ChequesPage standalone />} />
-        {Object.keys(PAGES).map(p => <Route key={p} path={`/department/${p}`} element={<DepartmentPage page={p} />} />)}
+        {Object.keys(PAGES).map(p => <Route key={p} path={`/department/${p}`} element={<DepartmentPage key={p} page={p} />} />)}
         {DAMAGE_DEPTS.map(d => <Route key={d.slug} path={d.path} element={<DamagePage key={d.slug} slug={d.slug} />} />)}
         <Route path="*" element={<Navigate to="/admin/departments" replace />} />
       </Routes>
