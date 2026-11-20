@@ -193,20 +193,33 @@ function Notice({ m }) {
   return <p role="alert" className={`flex items-start gap-2 rounded-md p-3 text-sm ${cls}`}><Icon size={18} className="mt-0.5 shrink-0" />{m.m}</p>
 }
 
-function DeptPanel({ slug, defaultName = '', entryRef, totalsSlot }) {
+// admin's period filter (Sales/Collection box) shared by every department while swiping/navigating
+const DEPT_FILTER_KEY = 'adminDeptFilter'
+const loadDeptFilter = () => {
+  try { return JSON.parse(sessionStorage.getItem(DEPT_FILTER_KEY)) || {} } catch { return {} }
+}
+
+function DeptPanel({ slug, defaultName = '', entryRef, totalsSlot, shareFilter = false }) {
   const isAdmin = defaultName === 'Admin'
   const todayStr = iso(new Date())
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState('day')
   const [date, setDate] = useState(todayStr)
   const [period, setPeriod] = useState({ month: todayStr.slice(0, 7), year: String(new Date().getFullYear()) })
-  const [tMode, setTMode] = useState(isAdmin ? 'date' : 'month')
-  const [tDate, setTDate] = useState(todayStr)
-  const [tMonth, setTMonth] = useState(todayStr.slice(0, 7))
-  const [tYear, setTYear] = useState(String(new Date().getFullYear()))
+  const sf = shareFilter ? loadDeptFilter() : {}
+  const [tMode, setTMode] = useState(sf.tMode || (isAdmin ? 'date' : 'month'))
+  const [tDate, setTDate] = useState(sf.tDate || todayStr)
+  const [tMonth, setTMonth] = useState(sf.tMonth || todayStr.slice(0, 7))
+  const [tYear, setTYear] = useState(sf.tYear || String(new Date().getFullYear()))
   const [tot, setTot] = useState({ sales: 0, collection: 0, days: 0 })
-  const [tFrom, setTFrom] = useState(todayStr.slice(0, 8) + '01')
-  const [tTo, setTTo] = useState(todayStr)
+  const [tFrom, setTFrom] = useState(sf.tFrom || todayStr.slice(0, 8) + '01')
+  const [tTo, setTTo] = useState(sf.tTo || todayStr)
+
+  // save the choice so the next department opens with the same filter
+  useEffect(() => {
+    if (!shareFilter) return
+    try { sessionStorage.setItem(DEPT_FILTER_KEY, JSON.stringify({ tMode, tDate, tMonth, tYear, tFrom, tTo })) } catch { /* storage blocked */ }
+  }, [shareFilter, tMode, tDate, tMonth, tYear, tFrom, tTo])
   const [rangeHist, setRangeHist] = useState([])
   const [hist, setHist] = useState(() => store.get('hist:' + slug, []))
   const [f, setF] = useState({ sales: '', collection: '', by: defaultName || localStorage.getItem('by') || '' })
@@ -582,7 +595,7 @@ function DepartmentPage({ page }) {
   const fromAdmin = useLocation().state?.admin || sp.get('admin') === '1'
   const entryRef = useRef(null)
   const [totalsSlot, setTotalsSlot] = useState(null)
-    const navigate = useNavigate()
+  const navigate = useNavigate()
   const deptIdx = DEPTS.findIndex(d => d.slug === tab)
   const prevDept = DEPTS[(deptIdx - 1 + DEPTS.length) % DEPTS.length]
   const nextDept = DEPTS[(deptIdx + 1) % DEPTS.length]
@@ -655,7 +668,7 @@ function DepartmentPage({ page }) {
           ))}
         </div>
       )}
-      <DeptPanel key={tab} slug={tab} entryRef={entryRef} totalsSlot={totalsSlot} />
+      <DeptPanel key={tab} slug={tab} entryRef={entryRef} totalsSlot={totalsSlot} shareFilter={!!fromAdmin} />
     </main>
   )
 }
